@@ -62,14 +62,15 @@ def manage_existing_positions(client: Client, log: logging.Logger) -> list[dict]
     serialized: list[dict] = []
     for p in positions:
         p.martingale_levels = execution.count_martingale_levels(p.symbol)
+        sl_pct, tp_pct = journal.get_position_targets(p.symbol)
 
-        if p.unrealized_pnl_pct <= CFG.HARD_STOP_LOSS_PCT:
-            log.warning(f"HARD_STOP {p.symbol} pnl={p.unrealized_pnl_pct:+.2%}")
+        if p.unrealized_pnl_pct <= sl_pct:
+            log.warning(f"HARD_STOP {p.symbol} pnl={p.unrealized_pnl_pct:+.2%} (target SL {sl_pct:+.2%})")
             execution.close_position(client, p, reason="sl")
             continue
 
-        if p.unrealized_pnl_pct >= CFG.TAKE_PROFIT_PCT:
-            log.info(f"TAKE_PROFIT {p.symbol} pnl={p.unrealized_pnl_pct:+.2%}")
+        if p.unrealized_pnl_pct >= tp_pct:
+            log.info(f"TAKE_PROFIT {p.symbol} pnl={p.unrealized_pnl_pct:+.2%} (target TP {tp_pct:+.2%})")
             execution.close_position(client, p, reason="tp")
             continue
 
@@ -88,6 +89,7 @@ def manage_existing_positions(client: Client, log: logging.Logger) -> list[dict]
             "entry_price": p.entry_price, "mark_price": p.mark_price,
             "unrealized_pnl_pct": p.unrealized_pnl_pct,
             "martingale_levels": p.martingale_levels,
+            "sl_pct": sl_pct, "tp_pct": tp_pct, "leverage": p.leverage,
         })
     return serialized
 
@@ -109,9 +111,14 @@ def execute_decisions(
                 log.info(f"skip long {d.symbol}: avail {account['available_balance']:.2f} "
                          f"< margin {margin_per_entry:.2f}")
                 continue
+            sl = d.stop_loss_pct if d.stop_loss_pct is not None else CFG.HARD_STOP_LOSS_PCT
+            tp = d.take_profit_pct if d.take_profit_pct is not None else CFG.TAKE_PROFIT_PCT
+            lev = d.leverage if d.leverage is not None else CFG.LEVERAGE
             log.info(f"OPEN LONG {d.symbol} margin={margin_per_entry:.2f} "
-                     f"conf={d.confidence:.2f} :: {d.reasoning[:120]}")
-            execution.open_long(client, d.symbol, margin_per_entry)
+                     f"lev={lev}x conf={d.confidence:.2f} SL={sl:+.0%} TP={tp:+.0%} "
+                     f":: {d.reasoning[:120]}")
+            execution.open_long(client, d.symbol, margin_per_entry,
+                                sl_pct=sl, tp_pct=tp, leverage=lev)
             open_syms.add(d.symbol)
 
         elif d.action == "close":
@@ -172,9 +179,15 @@ def one_cycle(client: Client, log: logging.Logger) -> None:
 
     fg = data.get_fear_greed()
     news = data.get_news_headlines(universe)
+    operator_notes = journal.get_active_operator_notes()
+    if operator_notes:
+        log.info(f"operator notes active: {len(operator_notes)}")
 
     log.info("calling Claude for decisions…")
-    decision = strategy.decide(candidate_features, open_serialized, fg, btc_features, news)
+    decision = strategy.decide(
+        candidate_features, open_serialized, fg, btc_features, news,
+        operator_notes=operator_notes,
+    )
     journal.log_decision(
         market_view=decision.market_view,
         decisions=[d.model_dump() for d in decision.decisions],

@@ -172,11 +172,12 @@ def ensure_protective_orders(client: Client, position: "Position") -> None:
     place_protective_orders(client, position.symbol, position.entry_price, position.side)
 
 
-def ensure_leverage_and_margin(client: Client, symbol: str) -> None:
+def ensure_leverage_and_margin(client: Client, symbol: str, leverage: int | None = None) -> None:
+    lev = leverage if leverage is not None else CFG.LEVERAGE
     try:
-        client.futures_change_leverage(symbol=symbol, leverage=CFG.LEVERAGE)
+        client.futures_change_leverage(symbol=symbol, leverage=lev)
     except BinanceAPIException as e:
-        journal.log_event("WARN", f"set leverage {symbol}: {e}")
+        journal.log_event("WARN", f"set leverage {symbol} {lev}x: {e}")
     try:
         client.futures_change_margin_type(symbol=symbol, marginType=CFG.MARGIN_TYPE)
     except BinanceAPIException as e:
@@ -185,14 +186,17 @@ def ensure_leverage_and_margin(client: Client, symbol: str) -> None:
             journal.log_event("WARN", f"set margin type {symbol}: {e}")
 
 
-def open_long(client: Client, symbol: str, margin_usdt: float) -> dict | None:
+def open_long(client: Client, symbol: str, margin_usdt: float,
+              sl_pct: float | None = None, tp_pct: float | None = None,
+              leverage: int | None = None) -> dict | None:
     if CFG.DRY_RUN:
         journal.log_event("DRY_RUN", f"would open long {symbol} margin={margin_usdt:.2f}")
         return None
 
-    ensure_leverage_and_margin(client, symbol)
+    lev = leverage if leverage is not None else CFG.LEVERAGE
+    ensure_leverage_and_margin(client, symbol, leverage=lev)
     price = float(client.futures_symbol_ticker(symbol=symbol)["price"])
-    notional = margin_usdt * CFG.LEVERAGE
+    notional = margin_usdt * lev
     lot_step, _ = _symbol_filters(client, symbol)
     qty = _floor_step(notional / price, lot_step)
     if qty <= 0:
@@ -209,8 +213,9 @@ def open_long(client: Client, symbol: str, margin_usdt: float) -> dict | None:
     fill = new_pos.entry_price if (new_pos and new_pos.entry_price > 0) else price
     journal.log_trade(
         symbol=symbol, side="LONG", qty=qty, price=fill,
-        notional=qty * fill, leverage=CFG.LEVERAGE,
+        notional=qty * fill, leverage=lev,
         kind="open", note=f"margin_usdt={margin_usdt:.2f}",
+        sl_pct=sl_pct, tp_pct=tp_pct,
     )
     if fill > 0:
         place_protective_orders(client, symbol, fill, "LONG")
@@ -225,7 +230,7 @@ def add_martingale(client: Client, position: Position) -> dict | None:
         return None
 
     add_margin = position.isolated_margin * CFG.MARTINGALE_ADD_RATIO
-    notional = add_margin * CFG.LEVERAGE
+    notional = add_margin * position.leverage   # use the leverage this position was opened with
     lot_step, _ = _symbol_filters(client, position.symbol)
     qty = _floor_step(notional / position.mark_price, lot_step)
     if qty <= 0:
@@ -240,7 +245,7 @@ def add_martingale(client: Client, position: Position) -> dict | None:
     fill = float(order.get("avgPrice") or position.mark_price)
     journal.log_trade(
         symbol=position.symbol, side="LONG", qty=qty, price=fill,
-        notional=qty * fill, leverage=CFG.LEVERAGE,
+        notional=qty * fill, leverage=position.leverage,
         kind="martingale_add",
         note=f"new_level={position.martingale_levels + 1}",
     )

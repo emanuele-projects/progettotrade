@@ -7,6 +7,7 @@ Opens at http://localhost:8501
 """
 from __future__ import annotations
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ import streamlit as st
 
 from config import CFG, STRATEGY_ALLOCATIONS, TOTAL_CAPITAL_USDT
 import execution
+import journal
 
 
 _SHADOWS_ENABLED = any(
@@ -32,6 +34,40 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+
+# ============================================================================
+# Login gate — single shared password from env (DASHBOARD_PASSWORD).
+# If env unset, dashboard refuses to serve. If set, user must type the password
+# once per browser session.
+# ============================================================================
+def _login_gate() -> None:
+    expected = (os.getenv("DASHBOARD_PASSWORD") or "").strip()
+    if not expected:
+        st.error(
+            "🔒 **Dashboard non configurata.**  \n"
+            "Imposta la variabile d'ambiente `DASHBOARD_PASSWORD` sul server "
+            "(su Railway: Variables del servizio) e fai un redeploy."
+        )
+        st.stop()
+    if st.session_state.get("authenticated") is True:
+        return
+    st.markdown("# 🔒 Login")
+    st.caption("Inserisci la password per accedere alla dashboard.")
+    with st.form("login_form", clear_on_submit=True):
+        pw = st.text_input("Password", type="password", label_visibility="collapsed",
+                           placeholder="Password")
+        submitted = st.form_submit_button("Accedi", type="primary")
+        if submitted:
+            if pw == expected:
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("Password sbagliata.")
+    st.stop()
+
+
+_login_gate()
 st.markdown(
     f"<meta http-equiv='refresh' content='{REFRESH_SECONDS}'>",
     unsafe_allow_html=True,
@@ -53,11 +89,18 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("Trading Bot")
-st.caption(
-    f"Paper trading · Auto-refresh {REFRESH_SECONDS}s · "
-    f"Capitale: ${TOTAL_CAPITAL_USDT:,.0f} su strategia Aggressive (Claude · 10x · martingale)"
-)
+title_col, logout_col = st.columns([8, 1])
+with title_col:
+    st.title("Trading Bot")
+    st.caption(
+        f"Paper trading · Auto-refresh {REFRESH_SECONDS}s · "
+        f"Capitale: ${TOTAL_CAPITAL_USDT:,.0f} su strategia Aggressive (Claude · 5x/10x · martingale)"
+    )
+with logout_col:
+    st.markdown("<div style='height: 1.5rem'></div>", unsafe_allow_html=True)
+    if st.button("Logout", width='stretch'):
+        st.session_state["authenticated"] = False
+        st.rerun()
 
 
 # ============================================================================
@@ -95,7 +138,12 @@ def load_journal() -> dict[str, pd.DataFrame]:
 
 @st.cache_data(ttl=REFRESH_SECONDS)
 def load_shadow_breakdowns() -> dict[str, list[dict[str, Any]]]:
+    import shadow
     return shadow.get_all_breakdowns()
+
+
+def load_operator_notes() -> list[dict[str, Any]]:
+    return journal.get_active_operator_notes()
 
 
 # ============================================================================
@@ -181,14 +229,81 @@ st.divider()
 # ============================================================================
 st.markdown("### Profilo strategia")
 st.caption(
-    f"Capitale ${agg_alloc:,.0f} · Leva {CFG.LEVERAGE}x · "
+    f"Capitale ${agg_alloc:,.0f} · Leva 5x o 10x decisa da Claude · "
     f"Max {CFG.MAX_CONCURRENT_POSITIONS} posizioni · "
     f"Margine per entry ${agg_alloc * CFG.POSITION_MARGIN_PCT:,.0f} ({CFG.POSITION_MARGIN_PCT:.1%}) · "
     f"Initial deploy {CFG.INITIAL_DEPLOY_PCT:.0%} · "
     f"Reserve martingale {CFG.RESERVE_FOR_AVERAGING_PCT:.0%} · "
-    f"TP {CFG.TAKE_PROFIT_PCT:+.0%} · SL {CFG.HARD_STOP_LOSS_PCT:+.0%} · "
-    f"Universo {CFG.UNIVERSE_MAX_CANDIDATES} mid-cap + 5 large-cap ancore"
+    f"SL/TP per posizione decisi da Claude (rotazione attiva) · "
+    f"Universo {CFG.UNIVERSE_MAX_CANDIDATES} mid-cap + 5 large-cap ancore · "
+    f"Multi-timeframe (1h/4h/1d) + ATR + flow futures"
 )
+
+st.divider()
+
+
+# ============================================================================
+# Operator notes — manual context the operator surfaces to Claude.
+# ============================================================================
+st.markdown("### Note operatore (input manuale per Claude)")
+st.caption(
+    "Tutto quello che inserisci qui viene letto da Claude al prossimo ciclo come contesto ad ALTA priorità. "
+    "Usalo per news non in CryptoPanic, eventi macro, rumor, catalizzatori specifici."
+)
+
+note_col1, note_col2 = st.columns([3, 1])
+with note_col1:
+    new_note_text = st.text_area(
+        "Nuova nota",
+        placeholder="es: 'Powell parla mercoledì 14:00 ET, attesi toni hawkish' o 'rumor su SOL hack, attendere conferme'",
+        key="new_note_text",
+        height=80,
+    )
+with note_col2:
+    note_symbol = st.text_input(
+        "Simbolo (opzionale)",
+        placeholder="es: BTCUSDT — vuoto = nota globale",
+        key="new_note_symbol",
+    ).strip().upper()
+    note_hours = st.number_input(
+        "Scade in (ore)",
+        min_value=1, max_value=720, value=48, step=1,
+        help="Dopo N ore la nota viene ignorata automaticamente.",
+        key="new_note_hours",
+    )
+    if st.button("Aggiungi nota", type="primary", width='stretch'):
+        if new_note_text.strip():
+            journal.add_operator_note(
+                new_note_text.strip(),
+                symbol=(note_symbol or None),
+                expires_hours=float(note_hours),
+            )
+            st.success("Nota salvata. Verrà passata a Claude al prossimo ciclo.")
+            st.rerun()
+        else:
+            st.warning("Scrivi qualcosa prima di salvare.")
+
+active_notes = load_operator_notes()
+if active_notes:
+    st.markdown(f"**Note attive ({len(active_notes)})**")
+    for n in active_notes:
+        target = n.get("symbol") or "Globale"
+        expires = n.get("expires_at")
+        expires_str = f" · scade {expires[:16]}" if expires else " · nessuna scadenza"
+        cols = st.columns([6, 1])
+        cols[0].markdown(
+            f"<div style='border-left:3px solid #0066ff;padding:6px 12px;margin:6px 0;"
+            f"background:#f5f5f7;border-radius:4px'>"
+            f"<span style='font-size:0.8rem;color:#86868b'>{n['ts'][:16]} · {target}{expires_str}</span><br/>"
+            f"{n['note']}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        if cols[1].button("Disattiva", key=f"deactivate_{n['id']}"):
+            journal.deactivate_operator_note(n["id"])
+            st.rerun()
+else:
+    st.info("Nessuna nota attiva. Aggiungine una sopra per dare contesto a Claude.")
 
 st.divider()
 
@@ -204,9 +319,11 @@ if positions:
     rows = []
     for p in positions:
         price_change_pct = (p["mark_price"] - p["entry_price"]) / p["entry_price"]
+        sl_pct, tp_pct = journal.get_position_targets(p["symbol"])
         rows.append({
             "Crypto": p["symbol"].replace("USDT", ""),
             "Grafico": f"https://www.binance.com/en/futures/{p['symbol']}",
+            "Leva": f"{p['leverage']}x",
             "Quantità": p["qty"],
             "Prezzo apertura": p["entry_price"],
             "Prezzo ora": p["mark_price"],
@@ -215,12 +332,15 @@ if positions:
             "Esposizione": p["qty"] * p["mark_price"],
             "P&L $": p["unrealized_pnl"],
             "P&L %": p["unrealized_pnl_pct"],
+            "SL": sl_pct,
+            "TP": tp_pct,
             "Martingale": p["martingale_levels"],
         })
     st.dataframe(
         pd.DataFrame(rows), width='stretch', hide_index=True,
         column_config={
             "Grafico": st.column_config.LinkColumn(display_text="📈 Apri", help="Apre il grafico su Binance Futures."),
+            "Leva": st.column_config.TextColumn(help="Leva scelta da Claude per questa posizione (5x o 10x)."),
             "Quantità": st.column_config.NumberColumn(format="%.4f"),
             "Prezzo apertura": st.column_config.NumberColumn(format="$%.4f"),
             "Prezzo ora": st.column_config.NumberColumn(format="$%.4f"),
@@ -229,7 +349,11 @@ if positions:
             "Esposizione": st.column_config.NumberColumn(format="$%.2f", help="Margine × leva 10x."),
             "P&L $": st.column_config.NumberColumn(format="$%+,.2f"),
             "P&L %": st.column_config.NumberColumn(format="percent",
-                                                   help="A -30% scatta SL, a +10% scatta TP."),
+                                                   help="Confronta con SL e TP ragionati da Claude (colonne accanto)."),
+            "SL": st.column_config.NumberColumn(format="percent",
+                                                 help="Stop loss specifico per questa posizione, deciso da Claude."),
+            "TP": st.column_config.NumberColumn(format="percent",
+                                                 help="Take profit specifico per questa posizione, deciso da Claude."),
             "Martingale": st.column_config.NumberColumn(help="Livelli usati su 3."),
         },
     )

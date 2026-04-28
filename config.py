@@ -44,8 +44,8 @@ class Config:
     MARGIN_TYPE: str = "ISOLATED"
     INITIAL_DEPLOY_PCT: float = 0.50         # 50% margin deployed initially
     RESERVE_FOR_AVERAGING_PCT: float = 0.50  # 50% kept liquid for martingale
-    MAX_CONCURRENT_POSITIONS: int = 8
-    POSITION_MARGIN_PCT: float = 0.0625      # 6.25% per entry × 8 = 50% deploy
+    MAX_CONCURRENT_POSITIONS: int = 10
+    POSITION_MARGIN_PCT: float = 0.05        # 5% per entry × 10 = 50% deploy
 
     # ---- Martingale (averaging down on losers) ----
     MARTINGALE_TRIGGER_DRAWDOWN_PCT: float = -0.05  # add at -5% on collateral
