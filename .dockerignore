@@ -6,7 +6,7 @@ data/
 *.db
 *.log
 .env
-.streamlit/
 KILL_SWITCH
-scripts/
-dashboard.py
+scripts/run.bat
+scripts/stop.bat
+scripts/dashboard.bat
