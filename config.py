@@ -63,7 +63,7 @@ class Config:
     UNIVERSE_MAX_CANDIDATES: int = 15
 
     # ---- Loop ----
-    LOOP_INTERVAL_SECONDS: int = 30 * 60
+    LOOP_INTERVAL_SECONDS: int = 15 * 60
 
     # ---- Emergency rail (instrumentation, not strategy block) ----
     EQUITY_FLOOR_PCT: float = 0.20  # auto-halt if equity < 20% of initial

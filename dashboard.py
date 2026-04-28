@@ -197,7 +197,7 @@ with s1:
     st.markdown("**Aggressive**")
     st.caption("Live · 10x leva · martingale · mid-cap")
     pnl_str, pct_str = _pnl_str(agg_value, agg_alloc)
-    st.metric(label="", value=f"${agg_value:,.2f}", delta=f"{pnl_str} ({pct_str})",
+    st.metric(label="Aggressive", value=f"${agg_value:,.2f}", delta=f"{pnl_str} ({pct_str})",
               label_visibility="collapsed")
     st.markdown(f"<span style='color:#86868b;font-size:0.85rem'>"
                 f"Allocato ${agg_alloc:,.0f} · {len(positions)} posizioni aperte</span>",
@@ -207,7 +207,7 @@ with s2:
     st.markdown("**HODL**")
     st.caption("Paper · 5 blue-chip equipesate · niente leva")
     pnl_str, pct_str = _pnl_str(hodl_value, hodl_alloc)
-    st.metric(label="", value=f"${hodl_value:,.2f}", delta=f"{pnl_str} ({pct_str})",
+    st.metric(label="HODL", value=f"${hodl_value:,.2f}", delta=f"{pnl_str} ({pct_str})",
               label_visibility="collapsed")
     st.markdown(f"<span style='color:#86868b;font-size:0.85rem'>"
                 f"Allocato ${hodl_alloc:,.0f} · 5 posizioni</span>",
@@ -218,7 +218,7 @@ with s3:
     st.markdown("**DCA settimanale**")
     st.caption(f"Paper · 5 blue-chip · settimana {n_weeks}/8")
     pnl_str, pct_str = _pnl_str(dca_value, dca_alloc)
-    st.metric(label="", value=f"${dca_value:,.2f}", delta=f"{pnl_str} ({pct_str})",
+    st.metric(label="DCA settimanale", value=f"${dca_value:,.2f}", delta=f"{pnl_str} ({pct_str})",
               label_visibility="collapsed")
     st.markdown(f"<span style='color:#86868b;font-size:0.85rem'>"
                 f"Allocato ${dca_alloc:,.0f} · accumula su 8 settimane</span>",
@@ -228,7 +228,7 @@ with s4:
     st.markdown("**Conservativa 2x**")
     st.caption("Paper · 5 blue-chip · leva 2x")
     pnl_str, pct_str = _pnl_str(cons_value, cons_alloc)
-    st.metric(label="", value=f"${cons_value:,.2f}", delta=f"{pnl_str} ({pct_str})",
+    st.metric(label="Conservativa 2x", value=f"${cons_value:,.2f}", delta=f"{pnl_str} ({pct_str})",
               label_visibility="collapsed")
     st.markdown(f"<span style='color:#86868b;font-size:0.85rem'>"
                 f"Allocato ${cons_alloc:,.0f} · 5 posizioni</span>",
@@ -300,6 +300,7 @@ with st.expander(f"Aggressive — {len(positions)} posizioni live aperte (Claude
             price_change_pct = (p["mark_price"] - p["entry_price"]) / p["entry_price"]
             rows.append({
                 "Crypto": p["symbol"].replace("USDT", ""),
+                "Grafico": f"https://www.binance.com/en/futures/{p['symbol']}",
                 "Quantità": p["qty"],
                 "Prezzo apertura": p["entry_price"],
                 "Prezzo ora": p["mark_price"],
@@ -311,8 +312,9 @@ with st.expander(f"Aggressive — {len(positions)} posizioni live aperte (Claude
                 "Martingale": p["martingale_levels"],
             })
         st.dataframe(
-            pd.DataFrame(rows), use_container_width=True, hide_index=True,
+            pd.DataFrame(rows), width='stretch', hide_index=True,
             column_config={
+                "Grafico": st.column_config.LinkColumn(display_text="📈 Apri", help="Apre il grafico su Binance Futures."),
                 "Quantità": st.column_config.NumberColumn(format="%.4f"),
                 "Prezzo apertura": st.column_config.NumberColumn(format="$%.4f"),
                 "Prezzo ora": st.column_config.NumberColumn(format="$%.4f"),
@@ -334,7 +336,7 @@ with st.expander(f"HODL — 5 blue-chip equipesate (compra-e-tieni)", expanded=F
     if df.empty:
         st.info("Verrà inizializzata al prossimo ciclo.")
     else:
-        st.dataframe(df, use_container_width=True, hide_index=True, column_config=_table_config)
+        st.dataframe(df, width='stretch', hide_index=True, column_config=_table_config)
 
 # --- DCA — 5 blue-chips, weekly buy ---
 with st.expander(f"DCA settimanale — 5 blue-chip (1/8 ogni settimana per 8 settimane)", expanded=False):
@@ -342,7 +344,7 @@ with st.expander(f"DCA settimanale — 5 blue-chip (1/8 ogni settimana per 8 set
     if df.empty:
         st.info("Verrà inizializzata al prossimo ciclo.")
     else:
-        st.dataframe(df, use_container_width=True, hide_index=True, column_config=_table_config)
+        st.dataframe(df, width='stretch', hide_index=True, column_config=_table_config)
         if shadow_breakdowns["dca"]:
             wks = shadow_breakdowns["dca"][0].get("weeks_filled", 0)
             st.caption(f"Settimane completate: **{wks}/8**. Cash ancora da investire: ${(dca_alloc/8)*(8-wks):,.2f}.")
@@ -354,7 +356,7 @@ with st.expander(f"Conservativa 2x — 5 blue-chip a leva 2x (apri-e-tieni)", ex
         st.info("Verrà inizializzata al prossimo ciclo.")
     else:
         cfg = dict(_table_config)
-        st.dataframe(df, use_container_width=True, hide_index=True, column_config=cfg)
+        st.dataframe(df, width='stretch', hide_index=True, column_config=cfg)
 
 st.divider()
 
@@ -376,7 +378,7 @@ if not eq_df.empty:
         "shadow_lowlev": "Conservativa 2x",
     }
     pct_change = pct_change.rename(columns=label_map)
-    st.line_chart(pct_change, use_container_width=True, height=380)
+    st.line_chart(pct_change, width='stretch', height=380)
 else:
     st.info("Nessun dato di equity ancora — aspetta il primo ciclo.")
 
@@ -389,31 +391,50 @@ st.divider()
 col_left, col_right = st.columns([1, 1])
 
 with col_left:
-    st.markdown("### Ultime decisioni di Claude")
-    st.caption("Strategia Aggressive — una decisione per ciclo.")
+    st.markdown("### Decisioni di Claude — dettaglio per crypto")
+    st.caption("Una card per ogni crypto valutata: azione, confidence, motivazione completa, link al grafico.")
     dec = journal_data["decisions"]
     if dec.empty:
         st.info("Nessuna decisione ancora.")
     else:
+        action_emoji = {"long": "🟢", "flat": "⚪", "close": "🔴"}
+        action_label = {"long": "Apri LONG", "flat": "Sta fuori", "close": "Chiudi posizione"}
         for _, row in dec.iterrows():
-            with st.expander(f"{row['ts']:%d/%m %H:%M UTC}"):
-                st.write(row["market_view"])
-                try:
-                    items = json.loads(row["decisions_json"])
-                    rows_d = [
-                        {
-                            "Crypto": d["symbol"].replace("USDT", ""),
-                            "Decisione": {"long": "🟢 Apri", "flat": "⚪ Niente",
-                                          "close": "🔴 Chiudi"}.get(d["action"], d["action"]),
-                            "Sicurezza": f"{d['confidence']:.0%}",
-                            "Motivo": d["reasoning"][:200],
-                        }
-                        for d in items
-                    ]
-                    st.dataframe(pd.DataFrame(rows_d), hide_index=True,
-                                 use_container_width=True)
-                except Exception:
-                    pass
+            try:
+                items = json.loads(row["decisions_json"])
+            except Exception:
+                items = []
+            n_long = sum(1 for d in items if d.get("action") == "long")
+            n_close = sum(1 for d in items if d.get("action") == "close")
+            header = (
+                f"{row['ts']:%d/%m %H:%M UTC} · {len(items)} crypto · "
+                f"🟢 {n_long} long · 🔴 {n_close} close"
+            )
+            with st.expander(header):
+                st.markdown(f"**Vista macro:** {row['market_view']}")
+                st.markdown("---")
+                for d in items:
+                    symbol = d.get("symbol", "")
+                    action = d.get("action", "")
+                    conf = float(d.get("confidence", 0))
+                    reasoning = d.get("reasoning", "")
+                    clean_sym = symbol.replace("USDT", "")
+                    chart_main = f"https://www.binance.com/en/futures/{symbol}"
+                    chart_test = f"https://testnet.binancefuture.com/en/futures/{symbol}"
+                    tv_link = f"https://www.tradingview.com/symbols/{symbol}.P/?exchange=BINANCE"
+                    emoji = action_emoji.get(action, "•")
+                    label = action_label.get(action, action)
+                    st.markdown(
+                        f"**{emoji} {clean_sym}** — {label} · sicurezza **{conf:.0%}**  \n"
+                        f"<span style='color:#3a3a3c'>{reasoning}</span>  \n"
+                        f"<span style='font-size:0.85rem'>"
+                        f"📈 <a href='{chart_main}' target='_blank'>Binance</a> · "
+                        f"<a href='{chart_test}' target='_blank'>Testnet</a> · "
+                        f"<a href='{tv_link}' target='_blank'>TradingView</a>"
+                        f"</span>",
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown("")
 
 with col_right:
     st.markdown("### Operazioni recenti")
@@ -435,7 +456,7 @@ with col_right:
         tr_display = tr_display[["ts", "Crypto", "Tipo", "qty", "price", "notional_usdt"]]
         tr_display.columns = ["Quando", "Crypto", "Tipo", "Quantità", "Prezzo", "Valore"]
         st.dataframe(
-            tr_display, use_container_width=True, hide_index=True,
+            tr_display, width='stretch', hide_index=True,
             column_config={
                 "Quantità": st.column_config.NumberColumn(format="%.4f"),
                 "Prezzo": st.column_config.NumberColumn(format="$%.4f"),
@@ -483,6 +504,6 @@ with st.expander("Glossario — significato di ogni termine"):
     )
 
 st.caption(
-    f"Auto-refresh ogni {REFRESH_SECONDS}s · Bot cycle ogni 30 min · "
+    f"Auto-refresh ogni {REFRESH_SECONDS}s · Bot cycle ogni 15 min · "
     f"DB: {CFG.JOURNAL_DB.name}"
 )

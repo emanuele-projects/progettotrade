@@ -2,7 +2,7 @@
 
 Long-only crypto futures bot. Leverage 10x, isolated margin, with martingale averaging-down on losers. **Paper trading only** — `USE_TESTNET=True` is hardcoded in `config.py`. Mainnet requires an explicit code edit.
 
-## What it does each cycle (every 30 min)
+## What it does each cycle (every 15 min)
 
 1. Reads testnet account state.
 2. Manages existing positions: take-profit, hard stop-loss, martingale add on drawdown.
@@ -47,7 +47,7 @@ del KILL_SWITCH
 scripts\run.bat
 ```
 
-The bot loops every 30 minutes until stopped.
+The bot loops every 15 minutes until stopped.
 
 ## Stop
 
@@ -90,7 +90,7 @@ Prints equity curves: live testnet bot vs HODL / DCA / conservative-2x benchmark
 | `HARD_STOP_LOSS_PCT` | -0.30 | Hard cut on collateral |
 | `TAKE_PROFIT_PCT` | 0.10 | |
 | `EQUITY_FLOOR_PCT` | 0.20 | Auto-halt if total equity < 20% of initial |
-| `LOOP_INTERVAL_SECONDS` | 1800 | 30 min |
+| `LOOP_INTERVAL_SECONDS` | 900 | 15 min |
 
 ## Safety rails
 
