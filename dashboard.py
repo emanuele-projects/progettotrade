@@ -14,6 +14,7 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 from config import CFG, STRATEGY_ALLOCATIONS, TOTAL_CAPITAL_USDT
 import execution
@@ -68,10 +69,10 @@ def _login_gate() -> None:
 
 
 _login_gate()
-st.markdown(
-    f"<meta http-equiv='refresh' content='{REFRESH_SECONDS}'>",
-    unsafe_allow_html=True,
-)
+# Soft auto-refresh via Streamlit's own rerun mechanism — DOES NOT reset
+# session_state (so the user stays logged in across refreshes). The previous
+# meta http-equiv refresh caused a full page reload, which wiped the session.
+st_autorefresh(interval=REFRESH_SECONDS * 1000, key="auto_refresh_tick")
 
 # Subtle CSS polish: tighten spacing, soften card backgrounds
 st.markdown(
