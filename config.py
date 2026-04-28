@@ -11,22 +11,24 @@ load_dotenv()
 ROOT = Path(__file__).resolve().parent
 
 
-# Per-strategy capital allocation. Sum = total simulated portfolio.
-# - aggressive: places real orders on Binance Futures testnet (Claude-driven mid-cap)
-# - others: paper-tracked on real prices (mathematically equivalent to real orders
-#   for comparison purposes, without polluting one testnet wallet with 4 overlapping
-#   strategies)
+# Single-strategy mode: all capital concentrated on the Claude-driven aggressive
+# bot. The shadow benchmark slots exist in the dict for legacy compatibility but
+# are zeroed out — main.py / shadow.py / dashboard.py skip them when 0.
 STRATEGY_ALLOCATIONS = {
-    "aggressive": 2500.0,
-    "hodl": 2500.0,
-    "dca": 2500.0,
-    "conservative_2x": 2500.0,
+    "aggressive": 10000.0,
+    "hodl": 0.0,
+    "dca": 0.0,
+    "conservative_2x": 0.0,
 }
 TOTAL_CAPITAL_USDT = sum(STRATEGY_ALLOCATIONS.values())
 
-# 5-crypto blue-chip portfolio used by HODL / DCA / Conservative strategies.
-# Aggressive picks dynamically from the mid-cap universe via Claude.
-BLUE_CHIP_PORTFOLIO = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
+# Always-included anchors: large-cap names that the bot will *always* see in the
+# candidate set, alongside the dynamic mid-cap shortlist. Lets Claude balance
+# the portfolio between high-vol mid-caps and steadier blue-chips.
+LARGE_CAP_ANCHORS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
+
+# Legacy alias used by shadow.py only — kept to avoid breaking imports.
+BLUE_CHIP_PORTFOLIO = LARGE_CAP_ANCHORS
 
 
 @dataclass(frozen=True)
@@ -42,8 +44,8 @@ class Config:
     MARGIN_TYPE: str = "ISOLATED"
     INITIAL_DEPLOY_PCT: float = 0.50         # 50% margin deployed initially
     RESERVE_FOR_AVERAGING_PCT: float = 0.50  # 50% kept liquid for martingale
-    MAX_CONCURRENT_POSITIONS: int = 5
-    POSITION_MARGIN_PCT: float = 0.10        # 10% per initial entry × 5 = 50%
+    MAX_CONCURRENT_POSITIONS: int = 8
+    POSITION_MARGIN_PCT: float = 0.0625      # 6.25% per entry × 8 = 50% deploy
 
     # ---- Martingale (averaging down on losers) ----
     MARTINGALE_TRIGGER_DRAWDOWN_PCT: float = -0.05  # add at -5% on collateral
@@ -60,7 +62,7 @@ class Config:
     MAX_MARKET_CAP_USD: float = 2_000_000_000
     MIN_VOLUME_24H_USD: float = 50_000_000
     UNIVERSE_REFRESH_HOURS: int = 6
-    UNIVERSE_MAX_CANDIDATES: int = 15
+    UNIVERSE_MAX_CANDIDATES: int = 25
 
     # ---- Loop ----
     LOOP_INTERVAL_SECONDS: int = 15 * 60

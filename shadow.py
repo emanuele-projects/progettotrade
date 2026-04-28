@@ -20,10 +20,11 @@ from config import CFG, STRATEGY_ALLOCATIONS, BLUE_CHIP_PORTFOLIO
 import journal
 
 
-HODL_USDT = STRATEGY_ALLOCATIONS["hodl"]
-DCA_USDT = STRATEGY_ALLOCATIONS["dca"]
-CONS_USDT = STRATEGY_ALLOCATIONS["conservative_2x"]
+HODL_USDT = STRATEGY_ALLOCATIONS.get("hodl", 0.0)
+DCA_USDT = STRATEGY_ALLOCATIONS.get("dca", 0.0)
+CONS_USDT = STRATEGY_ALLOCATIONS.get("conservative_2x", 0.0)
 N = len(BLUE_CHIP_PORTFOLIO)
+_ANY_ENABLED = (HODL_USDT + DCA_USDT + CONS_USDT) > 0
 
 
 def _events_with_level(level: str) -> list[sqlite3.Row]:
@@ -173,6 +174,8 @@ def cons_breakdown(prices: dict[str, float]) -> tuple[float, list[dict[str, Any]
 # Top-level update: log aggregate equity for each shadow.
 # ---------------------------------------------------------------------------
 def update_shadows() -> None:
+    if not _ANY_ENABLED:
+        return
     prices = _all_prices()
 
     hodl_total, _ = hodl_breakdown(prices)
@@ -194,6 +197,8 @@ def update_shadows() -> None:
 def get_all_breakdowns() -> dict[str, list[dict[str, Any]]]:
     """Return per-strategy per-symbol details. Calls update_shadows-equivalent
     state functions which are idempotent (init-on-first-call only)."""
+    if not _ANY_ENABLED:
+        return {"hodl": [], "dca": [], "conservative_2x": []}
     prices = _all_prices()
     _, hodl_rows = hodl_breakdown(prices)
     _, dca_rows = dca_breakdown(prices)

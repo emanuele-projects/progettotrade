@@ -15,12 +15,18 @@ from datetime import datetime, timezone
 
 from binance.client import Client
 
-from config import CFG
+from config import CFG, LARGE_CAP_ANCHORS, STRATEGY_ALLOCATIONS
 import data
 import execution
 import journal
 import shadow
 import strategy
+
+
+_SHADOWS_ENABLED = any(
+    STRATEGY_ALLOCATIONS.get(k, 0) > 0 for k in ("hodl", "dca", "conservative_2x")
+)
+_LARGE_CAP_SET = set(LARGE_CAP_ANCHORS)
 
 
 def setup_logging() -> logging.Logger:
@@ -147,18 +153,20 @@ def one_cycle(client: Client, log: logging.Logger) -> None:
     universe = data.filter_universe()
     if not universe:
         log.warning("empty universe — skipping decision")
-        try:
-            shadow.update_shadows()
-        except Exception as e:
-            log.warning(f"shadow update failed: {e}")
+        if _SHADOWS_ENABLED:
+            try:
+                shadow.update_shadows()
+            except Exception as e:
+                log.warning(f"shadow update failed: {e}")
         return
     log.info(f"universe ({len(universe)}): {','.join(universe)}")
 
-    btc_features = data.compute_features("BTCUSDT")
+    btc_features = data.compute_features("BTCUSDT", risk_tier="large_cap")
     candidate_features = []
     for sym in universe:
+        tier = "large_cap" if sym in _LARGE_CAP_SET else "mid_cap"
         try:
-            candidate_features.append(data.compute_features(sym))
+            candidate_features.append(data.compute_features(sym, risk_tier=tier))
         except Exception as e:
             log.warning(f"features failed for {sym}: {e}")
 
@@ -177,10 +185,11 @@ def one_cycle(client: Client, log: logging.Logger) -> None:
 
     execute_decisions(client, decision, account, log)
 
-    try:
-        shadow.update_shadows()
-    except Exception as e:
-        log.warning(f"shadow update failed: {e}")
+    if _SHADOWS_ENABLED:
+        try:
+            shadow.update_shadows()
+        except Exception as e:
+            log.warning(f"shadow update failed: {e}")
 
     log.info("cycle end")
 

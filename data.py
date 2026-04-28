@@ -21,6 +21,7 @@ _PUBLIC_BASE = "https://fapi.binance.com"
 @dataclass
 class Features:
     symbol: str
+    risk_tier: str  # "large_cap" or "mid_cap"
     last_price: float
     ret_1h: float
     ret_24h: float
@@ -30,6 +31,10 @@ class Features:
     ema50: float
     above_ema50: bool
     volume_24h_usd: float
+    # Futures-specific real-time signals
+    funding_rate_8h: float          # signed; positive = longs pay shorts (crowded long)
+    open_interest_change_24h: float # fraction; +0.05 = OI grew 5% in 24h
+    top_trader_long_pct: float      # 0..1; share of top traders in net long
 
 
 def _safe_get(url: str, params: dict | None = None, retries: int = 3) -> Any:
@@ -98,21 +103,29 @@ def get_market_caps(symbols: list[str]) -> dict[str, float]:
 
 
 def filter_universe() -> list[str]:
-    """Return mid-cap candidates listed on Binance Futures, ranked by activity/cap."""
+    """Mid-cap candidates by activity/cap, with large-cap anchors prepended.
+
+    Returns: large-cap anchors (BTC/ETH/SOL/BNB/XRP) first, then top-N mid-caps
+    ranked by 24h-volume-to-marketcap ratio. Anchors and mid-caps are deduped.
+    """
+    from config import LARGE_CAP_ANCHORS
+
     futures_syms = get_futures_universe()
     volumes = get_24h_volumes(futures_syms)
     caps = get_market_caps(futures_syms)
 
-    candidates = []
+    midcap = []
     for sym in futures_syms:
         vol = volumes.get(sym, 0)
         cap = caps.get(sym, 0)
         if (CFG.MIN_MARKET_CAP_USD <= cap <= CFG.MAX_MARKET_CAP_USD
                 and vol >= CFG.MIN_VOLUME_24H_USD):
-            candidates.append((sym, cap, vol))
-    # Bias toward "active" mid-caps: high volume relative to cap
-    candidates.sort(key=lambda x: x[2] / max(x[1], 1), reverse=True)
-    return [c[0] for c in candidates[:CFG.UNIVERSE_MAX_CANDIDATES]]
+            midcap.append((sym, cap, vol))
+    midcap.sort(key=lambda x: x[2] / max(x[1], 1), reverse=True)
+    midcap_syms = [c[0] for c in midcap[:CFG.UNIVERSE_MAX_CANDIDATES]]
+
+    anchors_listed = [s for s in LARGE_CAP_ANCHORS if s in futures_syms]
+    return list(dict.fromkeys(anchors_listed + midcap_syms))
 
 
 def get_klines(symbol: str, interval: str, limit: int = 200) -> pd.DataFrame:
@@ -136,7 +149,50 @@ def _rsi(series: pd.Series, period: int = 14) -> float:
     return float(rsi.iloc[-1])
 
 
-def compute_features(symbol: str) -> Features:
+def get_funding_rate(symbol: str) -> float:
+    """Last 8h funding rate. Positive = longs pay shorts (crowded long).
+    Extreme values (>0.05% or <-0.05%) often precede mean-reversion."""
+    try:
+        r = _safe_get(f"{_PUBLIC_BASE}/fapi/v1/premiumIndex", params={"symbol": symbol})
+        return float(r.get("lastFundingRate", 0))
+    except Exception:
+        return 0.0
+
+
+def get_open_interest_change_24h(symbol: str) -> float:
+    """Open interest % change vs ~24h ago, hourly resolution.
+    Rising OI + rising price = real momentum. Rising OI + falling price = trap.
+    Falling OI + price up = short covering."""
+    try:
+        rows = _safe_get(
+            f"{_PUBLIC_BASE}/futures/data/openInterestHist",
+            params={"symbol": symbol, "period": "1h", "limit": 25},
+        )
+        if not rows or len(rows) < 2:
+            return 0.0
+        first = float(rows[0]["sumOpenInterest"])
+        last = float(rows[-1]["sumOpenInterest"])
+        return (last / first - 1) if first else 0.0
+    except Exception:
+        return 0.0
+
+
+def get_top_trader_long_pct(symbol: str) -> float:
+    """Share of top traders (by position size) currently net-long. 0..1.
+    >0.65 with bullish technicals = confirmation. >0.80 = excessive optimism."""
+    try:
+        rows = _safe_get(
+            f"{_PUBLIC_BASE}/futures/data/topLongShortPositionRatio",
+            params={"symbol": symbol, "period": "1h", "limit": 1},
+        )
+        if not rows:
+            return 0.5
+        return float(rows[0].get("longAccount", 0.5))
+    except Exception:
+        return 0.5
+
+
+def compute_features(symbol: str, risk_tier: str = "mid_cap") -> Features:
     df = get_klines(symbol, "1h", 200)
     closes = df["close"]
     last = float(closes.iloc[-1])
@@ -147,11 +203,17 @@ def compute_features(symbol: str) -> Features:
     ema50 = float(closes.ewm(span=50, adjust=False).mean().iloc[-1])
     rsi = _rsi(closes, 14)
     vol_usd = float((df["close"] * df["volume"]).tail(24).sum())
+    funding = get_funding_rate(symbol)
+    oi_change = get_open_interest_change_24h(symbol)
+    top_long = get_top_trader_long_pct(symbol)
     return Features(
-        symbol=symbol, last_price=last,
+        symbol=symbol, risk_tier=risk_tier, last_price=last,
         ret_1h=ret_1h, ret_24h=ret_24h, ret_7d=ret_7d,
         rsi_14=rsi, ema20=ema20, ema50=ema50,
         above_ema50=last > ema50, volume_24h_usd=vol_usd,
+        funding_rate_8h=funding,
+        open_interest_change_24h=oi_change,
+        top_trader_long_pct=top_long,
     )
 
 
