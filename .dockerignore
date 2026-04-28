@@ -1,0 +1,12 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+data/
+*.db
+*.log
+.env
+.streamlit/
+KILL_SWITCH
+scripts/
+dashboard.py
