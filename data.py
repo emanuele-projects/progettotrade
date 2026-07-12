@@ -46,6 +46,8 @@ class Features:
     funding_rate_8h: float           # signed; positive = longs pay shorts (crowded long)
     open_interest_change_24h: float  # fraction; +0.05 = OI grew 5% in 24h
     top_trader_long_pct: float       # 0..1; share of top traders in net long
+    # Exchange limits (filled by the caller from Binance leverage brackets)
+    max_leverage: int = 20
 
 
 def _safe_get(url: str, params: dict | None = None, retries: int = 3) -> Any:
@@ -218,7 +220,8 @@ def _atr_pct(df: pd.DataFrame, period: int = 14) -> float:
     return float(atr / close.iloc[-1]) if close.iloc[-1] else 0.0
 
 
-def compute_features(symbol: str, risk_tier: str = "mid_cap") -> Features:
+def compute_features(symbol: str, risk_tier: str = "mid_cap",
+                     max_leverage: int = 20) -> Features:
     df_1h = get_klines(symbol, "1h", 200)
     closes = df_1h["close"]
     last = float(closes.iloc[-1])
@@ -279,6 +282,7 @@ def compute_features(symbol: str, risk_tier: str = "mid_cap") -> Features:
         funding_rate_8h=funding,
         open_interest_change_24h=oi_change,
         top_trader_long_pct=top_long,
+        max_leverage=max_leverage,
     )
 
 

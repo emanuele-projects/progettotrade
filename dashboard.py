@@ -95,7 +95,7 @@ with title_col:
     st.title("Trading Bot")
     st.caption(
         f"Paper trading · Auto-refresh {REFRESH_SECONDS}s · "
-        f"Capitale: ${TOTAL_CAPITAL_USDT:,.0f} su strategia Aggressive (Claude · 5x/10x · martingale)"
+        f"Capitale: ${TOTAL_CAPITAL_USDT:,.0f} su strategia Aggressive (Claude · long/short · leva per-trade · martingale)"
     )
 with logout_col:
     st.markdown("<div style='height: 1.5rem'></div>", unsafe_allow_html=True)
@@ -128,13 +128,22 @@ def load_journal() -> dict[str, pd.DataFrame]:
             "SELECT ts, symbol, side, qty, price, notional_usdt, kind, note "
             "FROM trades ORDER BY id DESC LIMIT 30",
             c, parse_dates=["ts"],
-        )
+        )  # side: LONG/SHORT — shown as Direzione
         decisions = pd.read_sql_query(
-            "SELECT ts, market_view, decisions_json FROM decisions "
+            "SELECT ts, market_view, decisions_json, trigger, model, "
+            "input_tokens, output_tokens FROM decisions "
             "ORDER BY id DESC LIMIT 5",
             c, parse_dates=["ts"],
         )
-    return {"equity": equity, "trades": trades, "decisions": decisions}
+        system_events = pd.read_sql_query(
+            "SELECT ts, level, msg FROM events WHERE level IN "
+            "('WS_STALE','FATAL','HALT','KILL_SOFT','RESUME','TRIGGER_DROPPED',"
+            "'RISK_BACKSTOP','ERROR','NOTIONAL_CAP','WARN') "
+            "ORDER BY id DESC LIMIT 12",
+            c, parse_dates=["ts"],
+        )
+    return {"equity": equity, "trades": trades, "decisions": decisions,
+            "system_events": system_events}
 
 
 @st.cache_data(ttl=REFRESH_SECONDS)
@@ -230,12 +239,12 @@ st.divider()
 # ============================================================================
 st.markdown("### Profilo strategia")
 st.caption(
-    f"Capitale ${agg_alloc:,.0f} · Leva 5x o 10x decisa da Claude · "
+    f"Capitale ${agg_alloc:,.0f} · Long/Short · Leva 5x–{CFG.MAX_LEVERAGE}x decisa da Claude per trade · "
     f"Max {CFG.MAX_CONCURRENT_POSITIONS} posizioni · "
     f"Margine per entry ${agg_alloc * CFG.POSITION_MARGIN_PCT:,.0f} ({CFG.POSITION_MARGIN_PCT:.1%}) · "
-    f"Initial deploy {CFG.INITIAL_DEPLOY_PCT:.0%} · "
-    f"Reserve martingale {CFG.RESERVE_FOR_AVERAGING_PCT:.0%} · "
-    f"SL/TP per posizione decisi da Claude (rotazione attiva) · "
+    f"Cap esposizione ${CFG.MAX_TOTAL_NOTIONAL_USDT:,.0f} · "
+    f"Martingale solo ≤{CFG.MARTINGALE_MAX_LEVERAGE}x (max {CFG.MARTINGALE_MAX_LEVELS} add) · "
+    f"SL/TP per posizione decisi da Claude, applicati in tempo reale via WebSocket + guardia pre-liquidazione · "
     f"Universo {CFG.UNIVERSE_MAX_CANDIDATES} mid-cap + 5 large-cap ancore · "
     f"Multi-timeframe (1h/4h/1d) + ATR + flow futures"
 )
@@ -323,6 +332,7 @@ if positions:
         sl_pct, tp_pct = journal.get_position_targets(p["symbol"])
         rows.append({
             "Crypto": p["symbol"].replace("USDT", ""),
+            "Direzione": "🟢 Long" if p["side"] == "LONG" else "🔴 Short",
             "Grafico": f"https://www.binance.com/en/futures/{p['symbol']}",
             "Leva": f"{p['leverage']}x",
             "Quantità": p["qty"],
@@ -341,13 +351,14 @@ if positions:
         pd.DataFrame(rows), width='stretch', hide_index=True,
         column_config={
             "Grafico": st.column_config.LinkColumn(display_text="📈 Apri", help="Apre il grafico su Binance Futures."),
-            "Leva": st.column_config.TextColumn(help="Leva scelta da Claude per questa posizione (5x o 10x)."),
+            "Direzione": st.column_config.TextColumn(help="Long = guadagna se il prezzo sale. Short = guadagna se scende."),
+            "Leva": st.column_config.TextColumn(help="Leva scelta da Claude per questa posizione."),
             "Quantità": st.column_config.NumberColumn(format="%.4f"),
             "Prezzo apertura": st.column_config.NumberColumn(format="$%.4f"),
             "Prezzo ora": st.column_config.NumberColumn(format="$%.4f"),
-            "Variazione prezzo": st.column_config.NumberColumn(format="percent"),
+            "Variazione prezzo": st.column_config.NumberColumn(format="percent", help="Variazione del prezzo dall'apertura. Per uno short il P&L sale quando questa scende."),
             "Margine": st.column_config.NumberColumn(format="$%.2f", help="Soldi tuoi in pegno."),
-            "Esposizione": st.column_config.NumberColumn(format="$%.2f", help="Margine × leva 10x."),
+            "Esposizione": st.column_config.NumberColumn(format="$%.2f", help="Margine × leva della posizione."),
             "P&L $": st.column_config.NumberColumn(format="$%+,.2f"),
             "P&L %": st.column_config.NumberColumn(format="percent",
                                                    help="Confronta con SL e TP ragionati da Claude (colonne accanto)."),
@@ -398,18 +409,23 @@ with col_left:
     if dec.empty:
         st.info("Nessuna decisione ancora.")
     else:
-        action_emoji = {"long": "🟢", "flat": "⚪", "close": "🔴"}
-        action_label = {"long": "Apri LONG", "flat": "Sta fuori", "close": "Chiudi posizione"}
+        action_emoji = {"long": "🟢", "short": "🔻", "flat": "⚪", "close": "🚪"}
+        action_label = {"long": "Apri LONG", "short": "Apri SHORT", "flat": "Sta fuori", "close": "Chiudi posizione"}
         for _, row in dec.iterrows():
             try:
                 items = json.loads(row["decisions_json"])
             except Exception:
                 items = []
             n_long = sum(1 for d in items if d.get("action") == "long")
+            n_short = sum(1 for d in items if d.get("action") == "short")
             n_close = sum(1 for d in items if d.get("action") == "close")
+            trig = row.get("trigger") if hasattr(row, "get") else row["trigger"]
+            trig_label = "" if pd.isna(trig) or not trig else (
+                " · ⏰ ciclo" if trig == "baseline" else f" · ⚡ {trig}"
+            )
             header = (
                 f"{row['ts']:%d/%m %H:%M UTC} · {len(items)} crypto · "
-                f"🟢 {n_long} long · 🔴 {n_close} close"
+                f"🟢 {n_long} long · 🔻 {n_short} short · 🚪 {n_close} close{trig_label}"
             )
             with st.expander(header):
                 st.markdown(f"**Vista macro:** {row['market_view']}")
@@ -449,13 +465,15 @@ with col_right:
             "martingale_add": "➕ Martingale",
             "tp": "🎯 Take Profit",
             "sl": "🛑 Stop Loss",
+            "liq_guard": "⛔ Chiusura pre-liquidazione",
             "manual_close": "🚪 Chiusura",
         }
         tr_display = tr.copy()
         tr_display["Tipo"] = tr_display["kind"].map(kind_map).fillna(tr_display["kind"])
         tr_display["Crypto"] = tr_display["symbol"].str.replace("USDT", "")
-        tr_display = tr_display[["ts", "Crypto", "Tipo", "qty", "price", "notional_usdt"]]
-        tr_display.columns = ["Quando", "Crypto", "Tipo", "Quantità", "Prezzo", "Valore"]
+        tr_display["Direzione"] = tr_display["side"].map({"LONG": "🟢 Long", "SHORT": "🔴 Short"}).fillna(tr_display["side"])
+        tr_display = tr_display[["ts", "Crypto", "Direzione", "Tipo", "qty", "price", "notional_usdt"]]
+        tr_display.columns = ["Quando", "Crypto", "Direzione", "Tipo", "Quantità", "Prezzo", "Valore"]
         st.dataframe(
             tr_display, width='stretch', hide_index=True,
             column_config={
@@ -464,6 +482,29 @@ with col_right:
                 "Valore": st.column_config.NumberColumn(format="$%.2f"),
             },
         )
+
+st.divider()
+
+
+# ============================================================================
+# System health — stream/risk-engine events worth the operator's attention
+# ============================================================================
+with st.expander("Salute sistema — eventi stream / risk engine"):
+    sys_ev = journal_data.get("system_events")
+    if sys_ev is None or sys_ev.empty:
+        st.info("Nessun evento di sistema recente. Tutto regolare.")
+    else:
+        level_map = {
+            "WS_STALE": "📡 Stream stantio", "FATAL": "💀 Fatale", "HALT": "🛑 Halt",
+            "KILL_SOFT": "⏸️ Pausa (soft kill)", "RESUME": "▶️ Ripresa",
+            "TRIGGER_DROPPED": "🔇 Trigger scartati", "RISK_BACKSTOP": "🚨 Backstop ciclo",
+            "ERROR": "❌ Errore", "NOTIONAL_CAP": "🧢 Cap esposizione", "WARN": "⚠️ Warning",
+        }
+        ev_display = sys_ev.copy()
+        ev_display["Tipo"] = ev_display["level"].map(level_map).fillna(ev_display["level"])
+        ev_display = ev_display[["ts", "Tipo", "msg"]]
+        ev_display.columns = ["Quando", "Tipo", "Dettaglio"]
+        st.dataframe(ev_display, width='stretch', hide_index=True)
 
 st.divider()
 
@@ -484,13 +525,15 @@ with st.expander("Glossario — significato di ogni termine"):
 
 **Leva (Leverage)** — Moltiplicatore. 10x significa che con $1 muovi $10. Amplifica guadagni e perdite di 10×.
 
-**LONG / SHORT** — LONG: scommetti che il prezzo salga (compri). SHORT: scommetti che scenda (vendi allo scoperto). Il bot fa solo LONG.
+**LONG / SHORT** — LONG: scommetti che il prezzo salga (compri). SHORT: scommetti che scenda (vendi allo scoperto). Il bot opera in entrambe le direzioni: la scelta la fa Claude in base a trend e flow.
 
-**Stop Loss (SL)** — Soglia di perdita oltre la quale la posizione viene chiusa automaticamente. Default: -30% sul margine.
+**Stop Loss (SL)** — Soglia di perdita (sul margine) oltre la quale la posizione viene chiusa. Decisa da Claude per ogni trade e applicata in tempo reale dal risk engine (WebSocket, reazione <1s).
 
-**Take Profit (TP)** — Soglia di guadagno alla quale la posizione viene chiusa automaticamente. Default: +10% sul margine.
+**Take Profit (TP)** — Soglia di guadagno (sul margine) alla quale la posizione viene chiusa. Anche questa per-trade e in tempo reale.
 
-**Martingale** — Quando una posizione perde -5%, il bot raddoppia per "recuperare". Max 3 volte. Rischioso se il prezzo continua a scendere.
+**Guardia pre-liquidazione (Liq-guard)** — Se il prezzo percorre il 75% della strada verso la liquidazione, il risk engine chiude d'ufficio, qualunque sia lo stop impostato.
+
+**Martingale** — Quando una posizione perde -15% sul margine, il bot media aggiungendo il 50% del margine. Max 2 volte, minimo 30 minuti tra le aggiunte, e SOLO su posizioni con leva ≤10x. A 15x/20x non si media mai.
 
 **HODL** — Compra e tieni, senza mai vendere.
 
@@ -505,6 +548,7 @@ with st.expander("Glossario — significato di ogni termine"):
     )
 
 st.caption(
-    f"Auto-refresh ogni {REFRESH_SECONDS}s · Bot cycle ogni 15 min · "
+    f"Auto-refresh ogni {REFRESH_SECONDS}s · Baseline ogni {CFG.BASELINE_INTERVAL_SECONDS // 60} min "
+    f"+ cicli a evento (max {CFG.EVENT_MAX_CALLS_PER_HOUR}/h) · "
     f"DB: {CFG.JOURNAL_DB.name}"
 )

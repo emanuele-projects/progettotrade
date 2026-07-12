@@ -67,8 +67,12 @@ def _now() -> str:
 
 @contextmanager
 def db() -> Iterator[sqlite3.Connection]:
-    conn = sqlite3.connect(CFG.JOURNAL_DB)
+    # timeout + busy_timeout: multiple writers (main loop, risk engine thread,
+    # dashboard process) contend on this file — wait instead of raising
+    # "database is locked".
+    conn = sqlite3.connect(CFG.JOURNAL_DB, timeout=5.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=5000")
     try:
         yield conn
         conn.commit()
@@ -79,32 +83,50 @@ def db() -> Iterator[sqlite3.Connection]:
 def init() -> None:
     CFG.JOURNAL_DB.parent.mkdir(parents=True, exist_ok=True)
     with db() as c:
+        # WAL lets readers (dashboard) coexist with concurrent writer threads.
+        # It's a property of the db file itself — set once, applies to every
+        # connection (including the raw ones in execution.py / shadow.py).
+        c.execute("PRAGMA journal_mode=WAL")
         c.executescript(SCHEMA)
-        # Lightweight migration: add sl_pct / tp_pct to existing trades tables.
-        # SQLite throws if the column already exists; swallow and continue.
-        for col in ("sl_pct", "tp_pct"):
+        # Lightweight migration: SQLite throws if the column already exists;
+        # swallow and continue.
+        migrations = [
+            ("trades", "sl_pct", "REAL"),
+            ("trades", "tp_pct", "REAL"),
+            ("trades", "trigger", "TEXT"),       # cycle | event:price_move | risk:sl | risk:liq_guard | ...
+            ("decisions", "trigger", "TEXT"),
+            ("decisions", "model", "TEXT"),
+            ("decisions", "input_tokens", "INTEGER"),
+            ("decisions", "output_tokens", "INTEGER"),
+        ]
+        for table, col, coltype in migrations:
             try:
-                c.execute(f"ALTER TABLE trades ADD COLUMN {col} REAL")
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}")
             except sqlite3.OperationalError:
                 pass
 
 
-def log_decision(market_view: str, decisions: list[dict], raw: str | None = None) -> None:
+def log_decision(market_view: str, decisions: list[dict], raw: str | None = None,
+                 trigger: str | None = None, model: str | None = None,
+                 input_tokens: int | None = None, output_tokens: int | None = None) -> None:
     with db() as c:
         c.execute(
-            "INSERT INTO decisions (ts, market_view, decisions_json, raw_response) VALUES (?, ?, ?, ?)",
-            (_now(), market_view, json.dumps(decisions), raw),
+            "INSERT INTO decisions (ts, market_view, decisions_json, raw_response, "
+            "trigger, model, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (_now(), market_view, json.dumps(decisions), raw,
+             trigger, model, input_tokens, output_tokens),
         )
 
 
 def log_trade(symbol: str, side: str, qty: float, price: float, notional: float,
               leverage: int, kind: str, note: str = "",
-              sl_pct: float | None = None, tp_pct: float | None = None) -> None:
+              sl_pct: float | None = None, tp_pct: float | None = None,
+              trigger: str | None = None) -> None:
     with db() as c:
         c.execute(
-            "INSERT INTO trades (ts, symbol, side, qty, price, notional_usdt, leverage, kind, note, sl_pct, tp_pct) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (_now(), symbol, side, qty, price, notional, leverage, kind, note, sl_pct, tp_pct),
+            "INSERT INTO trades (ts, symbol, side, qty, price, notional_usdt, leverage, kind, note, sl_pct, tp_pct, trigger) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (_now(), symbol, side, qty, price, notional, leverage, kind, note, sl_pct, tp_pct, trigger),
         )
 
 

@@ -9,7 +9,23 @@
       "Bash(git init *)",
       "Bash(git check-ignore *)",
       "Bash(git add *)",
-      "Bash(grep -E \"^\\\\.env$\")"
+      "Bash(grep -E \"^\\\\.env$\")",
+      "Bash(git -c user.email=\"campameme@gmail.com\" -c user.name=\"Campameme\" commit -m \"initial commit: trading bot + Railway config\")",
+      "Bash(git remote *)",
+      "Bash(git push *)",
+      "Bash(taskkill //PID 2672 //F)",
+      "Bash(git -c user.email=\"campameme@gmail.com\" -c user.name=\"Campameme\" commit -m \"add streamlit dashboard alongside bot via supervisor\")",
+      "Bash(git -c user.email=\"campameme@gmail.com\" -c user.name=\"Campameme\" commit -m \"loop 15 min + dashboard fixes + per-crypto Claude reasoning with Binance chart links\")",
+      "Bash(.venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\('dashboard.py'\\).read\\(\\)\\); print\\('dashboard.py syntax OK'\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\('data.py'\\).read\\(\\)\\); print\\('data.py OK'\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\('strategy.py'\\).read\\(\\)\\); print\\('strategy.py OK'\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('main.py OK'\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\('shadow.py'\\).read\\(\\)\\); print\\('shadow.py OK'\\)\")",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(git -c user.email=\"campameme@gmail.com\" -c user.name=\"Campameme\" commit -m \"single-strategy 10k aggressive: 8 positions, 25-symbol universe with large-cap anchors, futures-flow signals \\(funding/OI/top-trader\\)\")",
+      "Bash(git -c user.email=\"campameme@gmail.com\" -c user.name=\"Campameme\" commit -m \"v2 strategy: 10 positions, per-trade SL/TP/leverage \\(5x/10x\\), multi-timeframe + ATR signals, operator notes channel, password gate\")",
+      "Bash(.venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\('dashboard.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(git -c user.email=\"campameme@gmail.com\" -c user.name=\"Campameme\" commit -m \"soft auto-refresh via streamlit-autorefresh: keeps session alive across refreshes\")"
     ]
   }
 }

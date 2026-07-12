@@ -23,6 +23,7 @@ class Position:
     unrealized_pnl_pct: float  # vs isolated margin
     leverage: int
     isolated_margin: float
+    liquidation_price: float = 0.0  # exchange-computed; 0 when unavailable
     martingale_levels: int = 0
 
 
@@ -48,6 +49,27 @@ def get_account(client: Client) -> dict:
     }
 
 
+def _effective_leverage(raw_position: dict) -> int:
+    """Leverage of an open position.
+
+    The v3 positionRisk payload has no `leverage` field. Derive it from
+    |notional| / initialMargin (exact by definition: initialMargin = notional/L);
+    fall back to the legacy field, then to CFG.LEVERAGE. Never underestimate:
+    the risk engine computes liquidation distance from this."""
+    if raw_position.get("leverage"):
+        return int(raw_position["leverage"])
+    try:
+        notional = abs(float(raw_position["notional"]))
+        initial_margin = float(
+            raw_position.get("positionInitialMargin") or raw_position.get("initialMargin") or 0
+        )
+        if notional > 0 and initial_margin > 0:
+            return max(1, round(notional / initial_margin))
+    except (KeyError, ValueError, TypeError):
+        pass
+    return CFG.LEVERAGE
+
+
 def get_open_positions(client: Client) -> list[Position]:
     raw = client.futures_position_information()
     out: list[Position] = []
@@ -65,24 +87,97 @@ def get_open_positions(client: Client) -> list[Position]:
             symbol=p["symbol"], side=side, qty=abs(qty),
             entry_price=entry, mark_price=mark,
             unrealized_pnl=unrealized, unrealized_pnl_pct=pnl_pct,
-            leverage=int(p.get("leverage", CFG.LEVERAGE)),
+            leverage=_effective_leverage(p),
             isolated_margin=margin,
+            liquidation_price=float(p.get("liquidationPrice") or 0),
         ))
     return out
 
 
+# futures_exchange_info() is a ~2 MB response; caching is mandatory once orders
+# can fire on every tick instead of once per 15-min cycle.
+_FILTERS_CACHE: dict[str, tuple[float, float]] = {}
+_FILTERS_CACHE_TS: float = 0.0
+_FILTERS_TTL_SECONDS = 6 * 3600
+
+
 def _symbol_filters(client: Client, symbol: str) -> tuple[float, float]:
-    info = client.futures_exchange_info()
-    for s in info["symbols"]:
-        if s["symbol"] == symbol:
+    global _FILTERS_CACHE_TS
+    now = time.monotonic()
+    if not _FILTERS_CACHE or now - _FILTERS_CACHE_TS > _FILTERS_TTL_SECONDS:
+        info = client.futures_exchange_info()
+        fresh: dict[str, tuple[float, float]] = {}
+        for s in info["symbols"]:
             lot, tick = 0.001, 0.01
             for f in s["filters"]:
                 if f["filterType"] == "LOT_SIZE":
                     lot = float(f["stepSize"])
                 if f["filterType"] == "PRICE_FILTER":
                     tick = float(f["tickSize"])
-            return lot, tick
-    return 0.001, 0.01
+            fresh[s["symbol"]] = (lot, tick)
+        _FILTERS_CACHE.clear()
+        _FILTERS_CACHE.update(fresh)
+        _FILTERS_CACHE_TS = now
+    return _FILTERS_CACHE.get(symbol, (0.001, 0.01))
+
+
+_MAX_LEV_CACHE: dict[str, int] = {}
+_MAX_LEV_CACHE_TS: float = 0.0
+
+
+def get_max_leverage(client: Client, symbol: str) -> int:
+    """Max leverage Binance allows on `symbol` (first bracket), capped at CFG.MAX_LEVERAGE.
+
+    All brackets are fetched in ONE call and cached for
+    LEVERAGE_BRACKET_REFRESH_HOURS. On testnet the endpoint can be flaky —
+    fall back to CFG.MAX_LEVERAGE and log."""
+    global _MAX_LEV_CACHE_TS
+    now = time.monotonic()
+    ttl = CFG.LEVERAGE_BRACKET_REFRESH_HOURS * 3600
+    if not _MAX_LEV_CACHE or now - _MAX_LEV_CACHE_TS > ttl:
+        try:
+            data = client.futures_leverage_bracket()  # every symbol at once
+            fresh = {
+                entry["symbol"]: min(int(entry["brackets"][0]["initialLeverage"]), CFG.MAX_LEVERAGE)
+                for entry in data
+            }
+            _MAX_LEV_CACHE.clear()
+            _MAX_LEV_CACHE.update(fresh)
+            _MAX_LEV_CACHE_TS = now
+        except (BinanceAPIException, KeyError, IndexError, TypeError) as e:
+            journal.log_event("WARN", f"leverage brackets refresh: {e} — assuming {CFG.MAX_LEVERAGE}x")
+            _MAX_LEV_CACHE_TS = now  # don't hammer a broken endpoint every order
+    return _MAX_LEV_CACHE.get(symbol, CFG.MAX_LEVERAGE)
+
+
+def symbol_tradable(client: Client, symbol: str) -> bool:
+    """True if the CURRENT exchange (testnet when USE_TESTNET) lists the symbol.
+
+    The candidate universe is built from MAINNET data; the testnet lists fewer
+    symbols and answers with malformed payloads for unknown ones."""
+    _symbol_filters(client, symbol)  # refreshes the exchange-info cache if stale
+    return symbol in _FILTERS_CACHE
+
+
+def estimated_liq_distance(leverage: int) -> float:
+    """Approximate adverse price move (fraction) that liquidates an isolated position.
+
+    liq ≈ 1/L − maintenance-margin-rate. Conservative MMR estimate: at $500 margin
+    × 20x = $10k notional every symbol sits in its lowest (tier-1) bracket."""
+    return max(1.0 / leverage - CFG.RISK_MMR_ESTIMATE, 0.001)
+
+
+def clamp_sl_to_liquidation(sl_pct: float, leverage: int) -> float:
+    """Clamp a ROE-based stop-loss so its price distance stays safely inside liquidation.
+
+    sl_pct is negative ROE (fraction of margin). Price distance = |sl_pct| / leverage.
+    Max allowed price distance = RISK_SL_MAX_FRACTION_OF_LIQ × estimated_liq_distance.
+    Returns the (possibly clamped) sl_pct, still negative."""
+    max_price_dist = CFG.RISK_SL_MAX_FRACTION_OF_LIQ * estimated_liq_distance(leverage)
+    price_dist = abs(sl_pct) / leverage
+    if price_dist <= max_price_dist:
+        return sl_pct
+    return -(max_price_dist * leverage)
 
 
 def _floor_step(value: float, step: float) -> float:
@@ -100,23 +195,30 @@ def _round_price(value: float, tick: float) -> float:
     return _floor_step(value, tick)
 
 
-def place_protective_orders(client: Client, symbol: str, entry_price: float, side: str = "LONG") -> None:
+def place_protective_orders(client: Client, symbol: str, entry_price: float, side: str = "LONG",
+                            sl_pct: float | None = None, tp_pct: float | None = None,
+                            leverage: int | None = None) -> None:
     """Place server-side STOP_MARKET (SL) + TAKE_PROFIT_MARKET (TP) with closePosition=true.
 
-    Translation: collateral_pct / leverage = price_pct.
-    e.g. HARD_STOP_LOSS_PCT=-0.30 with LEVERAGE=10 → price drops 3% to trigger.
+    sl_pct/tp_pct are ROE-based (fraction of isolated margin), leverage is the
+    position's own leverage. Translation: collateral_pct / leverage = price_pct.
+    e.g. sl_pct=-0.30 with leverage=10 → price moves 3% adversely to trigger.
+    Falls back to CFG defaults when per-trade values are missing (legacy rows).
 
     NOTE: disabled on Binance Futures Testnet — the testnet routes conditional
     orders through a separate "algo" system that doesn't reconcile with the
     regular open-orders / cancel-all endpoints (causes phantom -4130 errors).
-    Cycle-level protection in main.py handles SL/TP during paper trading.
-    Re-enabled automatically on mainnet (USE_TESTNET=False).
+    Real-time protection (risk engine) handles SL/TP during paper trading.
+    Re-enabled automatically on mainnet (USE_TESTNET=False) as backstop.
     """
     if CFG.DRY_RUN or CFG.USE_TESTNET:
         return
+    lev = leverage if leverage is not None else CFG.LEVERAGE
+    sl = sl_pct if sl_pct is not None else CFG.HARD_STOP_LOSS_PCT
+    tp = tp_pct if tp_pct is not None else CFG.TAKE_PROFIT_PCT
     _, tick = _symbol_filters(client, symbol)
-    sl_price_pct = CFG.HARD_STOP_LOSS_PCT / CFG.LEVERAGE
-    tp_price_pct = CFG.TAKE_PROFIT_PCT / CFG.LEVERAGE
+    sl_price_pct = sl / lev
+    tp_price_pct = tp / lev
 
     if side == "LONG":
         sl_price = _round_price(entry_price * (1 + sl_price_pct), tick)
@@ -169,7 +271,9 @@ def ensure_protective_orders(client: Client, position: "Position") -> None:
     if has_sl and has_tp:
         return
     cancel_protective_orders(client, position.symbol)
-    place_protective_orders(client, position.symbol, position.entry_price, position.side)
+    sl_pct, tp_pct = journal.get_position_targets(position.symbol)
+    place_protective_orders(client, position.symbol, position.entry_price, position.side,
+                            sl_pct=sl_pct, tp_pct=tp_pct, leverage=position.leverage)
 
 
 def ensure_leverage_and_margin(client: Client, symbol: str, leverage: int | None = None) -> None:
@@ -186,16 +290,42 @@ def ensure_leverage_and_margin(client: Client, symbol: str, leverage: int | None
             journal.log_event("WARN", f"set margin type {symbol}: {e}")
 
 
-def open_long(client: Client, symbol: str, margin_usdt: float,
-              sl_pct: float | None = None, tp_pct: float | None = None,
-              leverage: int | None = None) -> dict | None:
+def open_position(client: Client, symbol: str, side: str, margin_usdt: float,
+                  sl_pct: float | None = None, tp_pct: float | None = None,
+                  leverage: int | None = None, trigger: str | None = None) -> dict | None:
+    """Open a LONG or SHORT market position with per-trade leverage and stops.
+
+    Leverage is clamped to the symbol's Binance bracket and CFG.MAX_LEVERAGE;
+    the ROE stop-loss is clamped so its price distance stays inside the
+    estimated liquidation distance (both no-ops in the allowed schema ranges,
+    logged when they do fire)."""
+    if side not in ("LONG", "SHORT"):
+        raise ValueError(f"side must be LONG or SHORT, got {side!r}")
     if CFG.DRY_RUN:
-        journal.log_event("DRY_RUN", f"would open long {symbol} margin={margin_usdt:.2f}")
+        journal.log_event("DRY_RUN", f"would open {side.lower()} {symbol} margin={margin_usdt:.2f}")
+        return None
+    if not symbol_tradable(client, symbol):
+        journal.log_event("WARN", f"{symbol}: not listed on the current exchange (testnet?) — skipped")
         return None
 
     lev = leverage if leverage is not None else CFG.LEVERAGE
+    max_lev = get_max_leverage(client, symbol)
+    if lev > max_lev:
+        journal.log_event("WARN", f"{symbol}: leverage {lev}x > bracket max {max_lev}x — clamped")
+        lev = max_lev
+    if sl_pct is not None:
+        clamped = clamp_sl_to_liquidation(sl_pct, lev)
+        if clamped != sl_pct:
+            journal.log_event("WARN", f"{symbol}: SL {sl_pct:+.2f} beyond liq-safe range at {lev}x — clamped to {clamped:+.2f}")
+            sl_pct = clamped
+
     ensure_leverage_and_margin(client, symbol, leverage=lev)
-    price = float(client.futures_symbol_ticker(symbol=symbol)["price"])
+    ticker = client.futures_symbol_ticker(symbol=symbol)
+    price_raw = ticker.get("price") if isinstance(ticker, dict) else None
+    if not price_raw or float(price_raw) <= 0:
+        journal.log_event("WARN", f"{symbol}: ticker without a usable price — skipped")
+        return None
+    price = float(price_raw)
     notional = margin_usdt * lev
     lot_step, _ = _symbol_filters(client, symbol)
     qty = _floor_step(notional / price, lot_step)
@@ -204,7 +334,8 @@ def open_long(client: Client, symbol: str, margin_usdt: float,
         return None
 
     order = client.futures_create_order(
-        symbol=symbol, side="BUY", type="MARKET", quantity=qty,
+        symbol=symbol, side="BUY" if side == "LONG" else "SELL",
+        type="MARKET", quantity=qty,
     )
     # Testnet sometimes returns avgPrice="0" right after MARKET fill — refetch position.
     time.sleep(0.5)
@@ -212,13 +343,14 @@ def open_long(client: Client, symbol: str, margin_usdt: float,
     new_pos = next((p for p in new_positions if p.symbol == symbol), None)
     fill = new_pos.entry_price if (new_pos and new_pos.entry_price > 0) else price
     journal.log_trade(
-        symbol=symbol, side="LONG", qty=qty, price=fill,
+        symbol=symbol, side=side, qty=qty, price=fill,
         notional=qty * fill, leverage=lev,
         kind="open", note=f"margin_usdt={margin_usdt:.2f}",
-        sl_pct=sl_pct, tp_pct=tp_pct,
+        sl_pct=sl_pct, tp_pct=tp_pct, trigger=trigger,
     )
     if fill > 0:
-        place_protective_orders(client, symbol, fill, "LONG")
+        place_protective_orders(client, symbol, fill, side,
+                                sl_pct=sl_pct, tp_pct=tp_pct, leverage=lev)
     else:
         journal.log_event("WARN", f"{symbol}: zero fill price, protection deferred to next cycle")
     return order
@@ -227,6 +359,12 @@ def open_long(client: Client, symbol: str, margin_usdt: float,
 def add_martingale(client: Client, position: Position) -> dict | None:
     if CFG.DRY_RUN:
         journal.log_event("DRY_RUN", f"would martingale-add {position.symbol}")
+        return None
+    # Averaging into a losing position is only sane at moderate leverage:
+    # above MARTINGALE_MAX_LEVERAGE the position lives or dies on its stop.
+    if position.leverage > CFG.MARTINGALE_MAX_LEVERAGE:
+        journal.log_event("WARN", f"martingale skipped on {position.symbol}: "
+                                  f"{position.leverage}x > {CFG.MARTINGALE_MAX_LEVERAGE}x cap")
         return None
 
     add_margin = position.isolated_margin * CFG.MARTINGALE_ADD_RATIO
@@ -239,28 +377,34 @@ def add_martingale(client: Client, position: Position) -> dict | None:
     # Cancel old SL/TP — they'll be replaced based on the new average entry
     cancel_protective_orders(client, position.symbol)
 
+    # Averaging adds in the SAME direction as the position (BUY for LONG, SELL for SHORT)
     order = client.futures_create_order(
-        symbol=position.symbol, side="BUY", type="MARKET", quantity=qty,
+        symbol=position.symbol, side="BUY" if position.side == "LONG" else "SELL",
+        type="MARKET", quantity=qty,
     )
     fill = float(order.get("avgPrice") or position.mark_price)
     journal.log_trade(
-        symbol=position.symbol, side="LONG", qty=qty, price=fill,
+        symbol=position.symbol, side=position.side, qty=qty, price=fill,
         notional=qty * fill, leverage=position.leverage,
         kind="martingale_add",
         note=f"new_level={position.martingale_levels + 1}",
     )
 
-    # Re-place protective orders against the new average entry
+    # Re-place protective orders against the new average entry, honoring the
+    # per-trade targets Claude chose at open (journal is the source of truth).
     new_positions = get_open_positions(client)
     new_pos = next((p for p in new_positions if p.symbol == position.symbol), None)
     if new_pos:
-        place_protective_orders(client, position.symbol, new_pos.entry_price, position.side)
+        sl_pct, tp_pct = journal.get_position_targets(position.symbol)
+        place_protective_orders(client, position.symbol, new_pos.entry_price, position.side,
+                                sl_pct=sl_pct, tp_pct=tp_pct, leverage=position.leverage)
 
     return order
 
 
-def close_position(client: Client, position: Position, reason: str) -> dict | None:
-    """reason in {'tp','sl','manual_close'}."""
+def close_position(client: Client, position: Position, reason: str,
+                   trigger: str | None = None) -> dict | None:
+    """reason in {'tp','sl','liq_guard','manual_close'}."""
     if CFG.DRY_RUN:
         journal.log_event("DRY_RUN", f"would close {position.symbol} reason={reason}")
         return None
@@ -277,6 +421,7 @@ def close_position(client: Client, position: Position, reason: str) -> dict | No
         notional=position.qty * fill, leverage=position.leverage,
         kind=reason,
         note=f"unrealized_pnl_pct={position.unrealized_pnl_pct:+.2%}",
+        trigger=trigger,
     )
     return order
 
