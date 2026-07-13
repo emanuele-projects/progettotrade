@@ -1,20 +1,8 @@
 @echo off
-REM Avvio automatico del trading bot + dashboard, con riavvio su crash.
-REM Lanciato al login dalla cartella Esecuzione automatica di Windows.
-REM  - runner.py esce 0  -> arresto volontario (KILL_SWITCH hard) -> stop, niente riavvio
-REM  - runner.py esce !=0 -> crash -> riavvio dopo 30 secondi
+REM Avvio del trading bot + dashboard al login (cartella Esecuzione automatica).
+REM Nessun loop qui: runner.py e' un supervisor persistente che riavvia da solo
+REM bot/dashboard su crash, si ferma su KILL_SWITCH hard, e ha un lock che impedisce
+REM istanze doppie. Questo .bat lo lancia una volta sola.
 title Trading Bot Supervisor
 cd /d "%~dp0"
-
-:loop
 ".venv\Scripts\python.exe" runner.py
-if "%errorlevel%"=="0" goto end
-echo.
-echo [autostart] runner terminato con errore (codice %errorlevel%). Riavvio tra 30s...  [Ctrl+C per annullare]
-ping -n 31 127.0.0.1 >nul
-goto loop
-
-:end
-echo.
-echo [autostart] Arresto pulito (KILL_SWITCH hard). Puoi chiudere questa finestra.
-echo Per riavviare: elimina il file KILL_SWITCH e rilancia autostart.bat (o rifai login).
