@@ -357,6 +357,8 @@ def open_position(client: Client, symbol: str, side: str, margin_usdt: float,
 
 
 def add_martingale(client: Client, position: Position) -> dict | None:
+    if not CFG.MARTINGALE_ENABLED:
+        return None  # averaging-down disabled (amplified drawdown on live data)
     if CFG.DRY_RUN:
         journal.log_event("DRY_RUN", f"would martingale-add {position.symbol}")
         return None

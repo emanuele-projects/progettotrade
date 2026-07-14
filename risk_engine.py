@@ -265,9 +265,11 @@ class RiskEngine(threading.Thread):
             self._close(cached, mark, "tp", f"target {cached.tp_pct:+.0%}")
             return
 
-        # (4) martingale — deterministic averaging, moderate leverage only,
-        #     and never while the kill switch asks the bot to stand down
-        if (cached.leverage <= CFG.MARTINGALE_MAX_LEVERAGE
+        # (4) martingale — deterministic averaging. DISABLED by default
+        #     (MARTINGALE_ENABLED=False): averaging into losers amplified the
+        #     drawdown on live data. Kept behind a flag for experimentation.
+        if (CFG.MARTINGALE_ENABLED
+                and cached.leverage <= CFG.MARTINGALE_MAX_LEVERAGE
                 and roe <= CFG.MARTINGALE_TRIGGER_ROE
                 and cached.martingale_levels < CFG.MARTINGALE_MAX_LEVELS
                 and time.monotonic() - cached.last_add_monotonic >= CFG.MARTINGALE_MIN_INTERVAL_SECONDS

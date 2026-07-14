@@ -101,7 +101,8 @@ def manage_existing_positions(client: Client, log: logging.Logger,
             execution.close_position(client, p, reason="tp", trigger="cycle:backstop" if risk_active else "cycle")
             continue
 
-        if (not risk_active
+        if (CFG.MARTINGALE_ENABLED
+                and not risk_active
                 and p.unrealized_pnl_pct <= CFG.MARTINGALE_TRIGGER_DRAWDOWN_PCT
                 and p.martingale_levels < CFG.MARTINGALE_MAX_LEVELS):
             # Legacy path (--once / engine down). add_martingale enforces the

@@ -69,6 +69,9 @@ class Config:
     MAX_TOTAL_NOTIONAL_USDT: float = 30_000.0
 
     # ---- Martingale (averaging down on losers) ----
+    # DISABLED 2026-07-14: on live data it added 14× onto losing positions and
+    # amplified the drawdown. A bad trade now stays small and hits its stop.
+    MARTINGALE_ENABLED: bool = False
     MARTINGALE_TRIGGER_DRAWDOWN_PCT: float = -0.05  # add at -5% on collateral (legacy cycle check; superseded by MARTINGALE_TRIGGER_ROE in the risk engine)
     MARTINGALE_ADD_RATIO: float = 0.50              # add 50% of current margin per step
     MARTINGALE_MAX_LEVELS: int = 2                  # max averages per position (was 3 pre-v3)
@@ -84,9 +87,15 @@ class Config:
     COOLDOWN_HOURS_AFTER_LIQUIDATION: int = 6
 
     # ---- Universe filtering ----
-    MIN_MARKET_CAP_USD: float = 200_000_000
-    MAX_MARKET_CAP_USD: float = 2_000_000_000
-    MIN_VOLUME_24H_USD: float = 50_000_000
+    # Intraday-momentum profile (2026-07-14): rank by 24h price MOVE, not by
+    # mid-cap size — we want the coins that are actually moving today. A liquidity
+    # floor keeps out illiquid pump-and-dumps the risk engine couldn't exit.
+    UNIVERSE_MODE: str = "movers"             # "movers" | "midcap" (legacy)
+    MIN_VOLUME_24H_USD: float = 40_000_000    # liquidity floor for movers
+    MOVER_MIN_ABS_CHANGE_24H: float = 0.04    # only coins that moved ≥4% in 24h
+    MOVER_MAX_ABS_CHANGE_24H: float = 0.60    # skip already-blown-off >60% pumps
+    MIN_MARKET_CAP_USD: float = 200_000_000   # (legacy midcap mode only)
+    MAX_MARKET_CAP_USD: float = 2_000_000_000 # (legacy midcap mode only)
     UNIVERSE_REFRESH_HOURS: int = 6
     UNIVERSE_MAX_CANDIDATES: int = 25
 
@@ -94,13 +103,14 @@ class Config:
     LOOP_INTERVAL_SECONDS: int = 15 * 60  # legacy fixed cycle; Phase 5 switches to BASELINE_INTERVAL_SECONDS
 
     # ---- Claude call policy (event-driven agent) ----
-    # Baseline is now a rare SAFETY NET: the local signal scanner (free) drives
-    # most decisions, so Claude is called on real signals, not on a fixed clock.
-    BASELINE_INTERVAL_SECONDS: int = 3 * 60 * 60  # 3h full-book review (was 30 min)
-    BASELINE_SKIP_IF_CALLED_WITHIN: int = 1800  # skip baseline if any Claude call ran in the last 30 min
-    EVENT_DEBOUNCE_SECONDS: int = 60           # collect triggers for this long before calling
-    EVENT_MIN_CALL_INTERVAL_SECONDS: int = 180 # min gap between any two Claude calls
-    EVENT_MAX_CALLS_PER_HOUR: int = 8          # token bucket for event-triggered calls
+    # Intraday profile: baseline every 2h as safety net; the free scanner drives
+    # the fast decisions on breakouts/impulses. Slightly higher event cap since
+    # volatile movers fire more (still bounded so cost stays sane).
+    BASELINE_INTERVAL_SECONDS: int = 2 * 60 * 60  # 2h full-book review
+    BASELINE_SKIP_IF_CALLED_WITHIN: int = 1200  # skip baseline if a Claude call ran in the last 20 min
+    EVENT_DEBOUNCE_SECONDS: int = 45           # collect triggers for this long before calling
+    EVENT_MIN_CALL_INTERVAL_SECONDS: int = 120 # min gap between any two Claude calls
+    EVENT_MAX_CALLS_PER_HOUR: int = 12         # token bucket for event-triggered calls
     # Raw price-move trigger from the WS layer: kept only for EXTREME fast moves
     # (the scanner is the primary, qualified trigger source now).
     EVENT_PRICE_MOVE_PCT_HELD: float = 0.05       # 5% move in window on a held symbol

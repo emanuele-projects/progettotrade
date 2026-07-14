@@ -93,6 +93,22 @@ def get_24h_volumes(symbols: list[str]) -> dict[str, float]:
             for row in data if row["symbol"] in wanted}
 
 
+def get_24h_stats(symbols: list[str]) -> dict[str, tuple[float, float]]:
+    """{symbol: (quote_volume_usd, price_change_frac_24h)} in one call.
+
+    price_change_frac is a signed fraction (0.052 = +5.2% over 24h)."""
+    data = _safe_get(f"{_PUBLIC_BASE}/fapi/v1/ticker/24hr")
+    wanted = set(symbols)
+    out: dict[str, tuple[float, float]] = {}
+    for row in data:
+        if row["symbol"] in wanted:
+            out[row["symbol"]] = (
+                float(row.get("quoteVolume", 0)),
+                float(row.get("priceChangePercent", 0)) / 100.0,
+            )
+    return out
+
+
 def get_market_caps(symbols: list[str]) -> dict[str, float]:
     """Approximate market cap via CoinGecko top-500 list. Symbols not found are omitted."""
     base_to_binance = {s.replace("USDT", "").lower(): s for s in symbols if s.endswith("USDT")}
@@ -115,18 +131,11 @@ def get_market_caps(symbols: list[str]) -> dict[str, float]:
     return out
 
 
-def filter_universe() -> list[str]:
-    """Mid-cap candidates by activity/cap, with large-cap anchors prepended.
-
-    Returns: large-cap anchors (BTC/ETH/SOL/BNB/XRP) first, then top-N mid-caps
-    ranked by 24h-volume-to-marketcap ratio. Anchors and mid-caps are deduped.
-    """
+def _filter_universe_midcap(futures_syms: list[str]) -> list[str]:
+    """Legacy: mid-cap by 24h-volume-to-marketcap ratio + large-cap anchors."""
     from config import LARGE_CAP_ANCHORS
-
-    futures_syms = get_futures_universe()
     volumes = get_24h_volumes(futures_syms)
     caps = get_market_caps(futures_syms)
-
     midcap = []
     for sym in futures_syms:
         vol = volumes.get(sym, 0)
@@ -136,9 +145,38 @@ def filter_universe() -> list[str]:
             midcap.append((sym, cap, vol))
     midcap.sort(key=lambda x: x[2] / max(x[1], 1), reverse=True)
     midcap_syms = [c[0] for c in midcap[:CFG.UNIVERSE_MAX_CANDIDATES]]
-
     anchors_listed = [s for s in LARGE_CAP_ANCHORS if s in futures_syms]
     return list(dict.fromkeys(anchors_listed + midcap_syms))
+
+
+def filter_universe() -> list[str]:
+    """Candidate set for the current profile.
+
+    "movers" (default, intraday): the coins actually MOVING today — ranked by
+    absolute 24h price change, above a liquidity floor, excluding already-blown
+    parabolic pumps. Large-cap anchors are prepended for macro context.
+    "midcap": the legacy size-based selection.
+    """
+    from config import LARGE_CAP_ANCHORS
+
+    futures_syms = get_futures_universe()
+    if CFG.UNIVERSE_MODE == "midcap":
+        return _filter_universe_midcap(futures_syms)
+
+    stats = get_24h_stats(futures_syms)
+    movers = []
+    for sym in futures_syms:
+        vol, chg = stats.get(sym, (0.0, 0.0))
+        if (vol >= CFG.MIN_VOLUME_24H_USD
+                and CFG.MOVER_MIN_ABS_CHANGE_24H <= abs(chg) <= CFG.MOVER_MAX_ABS_CHANGE_24H):
+            movers.append((sym, abs(chg), vol))
+    # rank by how much they moved today (biggest movers first)
+    movers.sort(key=lambda x: x[1], reverse=True)
+    mover_syms = [m[0] for m in movers[:CFG.UNIVERSE_MAX_CANDIDATES]]
+
+    # anchors first, for BTC/ETH macro context in the prompt
+    anchors_listed = [s for s in LARGE_CAP_ANCHORS if s in futures_syms]
+    return list(dict.fromkeys(anchors_listed + mover_syms))
 
 
 def get_klines(symbol: str, interval: str, limit: int = 200) -> pd.DataFrame:
