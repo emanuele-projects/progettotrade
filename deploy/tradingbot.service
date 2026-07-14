@@ -1,0 +1,21 @@
+[Unit]
+Description=Trading bot supervisor (runner.py -> bot + Streamlit dashboard)
+Documentation=https://github.com/Campameme/progettotrade
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APP_DIR__
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__APP_DIR__/.venv/bin/python -u runner.py
+# runner.py exits 0 only on a deliberate hard KILL_SWITCH -> stay down.
+# Any non-zero crash of the supervisor itself -> systemd brings it back.
+Restart=on-failure
+RestartSec=15
+KillSignal=SIGTERM
+TimeoutStopSec=40
+
+[Install]
+WantedBy=multi-user.target
