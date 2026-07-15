@@ -21,6 +21,7 @@ import data
 import events
 import execution
 import journal
+import performance
 import risk_engine
 import scanner
 import shadow
@@ -253,10 +254,15 @@ def baseline_cycle(client: Client, log: logging.Logger,
     if operator_notes:
         log.info(f"operator notes active: {len(operator_notes)}")
 
+    perf_review = performance.build_performance_review(client)
+    if perf_review:
+        log.info("self-correction: " + perf_review.splitlines()[1])  # the win-rate/net line
+
     log.info("calling Claude for decisions…")
     decision, usage = strategy.decide(
         candidate_features, open_serialized, fg, btc_features, news,
         operator_notes=operator_notes,
+        perf_review=perf_review,
     )
     journal.log_decision(
         market_view=decision.market_view,

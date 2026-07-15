@@ -14,10 +14,11 @@ ROOT = Path(__file__).resolve().parent
 # Single-strategy mode: all capital concentrated on the Claude-driven aggressive
 # bot. The shadow benchmark slots exist in the dict for legacy compatibility but
 # are zeroed out — main.py / shadow.py / dashboard.py skip them when 0.
-# 2026-07-12: fresh start from the ACTUAL testnet equity ($4,991.52) — journal
-# archived to journal_backup_*.db, P&L baseline restarts from here.
+# 2026-07-15: full RESET to the ACTUAL post-flatten testnet balance ($3,912.89) —
+# all positions closed flat, journal archived to journal_backup_pre_reset.db, P&L
+# baseline restarts here for a clean, token-save, self-correcting 7-day run.
 STRATEGY_ALLOCATIONS = {
-    "aggressive": 4991.0,
+    "aggressive": 3912.89,
     "hodl": 0.0,
     "dca": 0.0,
     "conservative_2x": 0.0,
@@ -97,20 +98,20 @@ class Config:
     MIN_MARKET_CAP_USD: float = 200_000_000   # (legacy midcap mode only)
     MAX_MARKET_CAP_USD: float = 2_000_000_000 # (legacy midcap mode only)
     UNIVERSE_REFRESH_HOURS: int = 6
-    UNIVERSE_MAX_CANDIDATES: int = 25
+    UNIVERSE_MAX_CANDIDATES: int = 18          # token-save: fewer candidates per prompt
 
     # ---- Loop ----
     LOOP_INTERVAL_SECONDS: int = 15 * 60  # legacy fixed cycle; Phase 5 switches to BASELINE_INTERVAL_SECONDS
 
     # ---- Claude call policy (event-driven agent) ----
-    # Intraday profile: baseline every 2h as safety net; the free scanner drives
-    # the fast decisions on breakouts/impulses. Slightly higher event cap since
-    # volatile movers fire more (still bounded so cost stays sane).
-    BASELINE_INTERVAL_SECONDS: int = 2 * 60 * 60  # 2h full-book review
+    # TOKEN-SAVE profile (2026-07-15, for a low-cost 7-day run): baseline every 4h
+    # as safety net; the free scanner drives the fast decisions on real breakouts.
+    # Event cap kept low so a week of running stays ~$1-1.5/day.
+    BASELINE_INTERVAL_SECONDS: int = 4 * 60 * 60  # 4h full-book review
     BASELINE_SKIP_IF_CALLED_WITHIN: int = 1200  # skip baseline if a Claude call ran in the last 20 min
-    EVENT_DEBOUNCE_SECONDS: int = 45           # collect triggers for this long before calling
-    EVENT_MIN_CALL_INTERVAL_SECONDS: int = 120 # min gap between any two Claude calls
-    EVENT_MAX_CALLS_PER_HOUR: int = 12         # token bucket for event-triggered calls
+    EVENT_DEBOUNCE_SECONDS: int = 90           # collect triggers for this long before calling
+    EVENT_MIN_CALL_INTERVAL_SECONDS: int = 300 # ≥5 min gap between any two Claude calls
+    EVENT_MAX_CALLS_PER_HOUR: int = 4          # token bucket for event-triggered calls
     # Raw price-move trigger from the WS layer: kept only for EXTREME fast moves
     # (the scanner is the primary, qualified trigger source now).
     EVENT_PRICE_MOVE_PCT_HELD: float = 0.05       # 5% move in window on a held symbol
@@ -120,12 +121,12 @@ class Config:
 
     # ---- Local signal scanner (free: pure Python over REST/WS data) ----
     SCANNER_ENABLED: bool = True
-    SCANNER_INTERVAL_SECONDS: int = 300        # re-scan watchlist ∪ positions every 5 min
-    SIGNAL_DEBOUNCE_SECONDS: int = 3600        # don't re-fire the same signal on a symbol within 1h
+    SCANNER_INTERVAL_SECONDS: int = 600        # re-scan watchlist ∪ positions every 10 min
+    SIGNAL_DEBOUNCE_SECONDS: int = 7200        # don't re-fire the same signal on a symbol within 2h
     # Technical-signal thresholds (transitions vs the previous scan, not levels):
     SIGNAL_RSI_OVERBOUGHT: float = 70.0        # RSI_4h crossing down out of this = short-interest signal
     SIGNAL_RSI_OVERSOLD: float = 30.0          # RSI_4h crossing up out of this = long-interest signal
-    SIGNAL_MOMENTUM_1H: float = 0.03           # |ret_1h| ≥ 3% = notable impulse
+    SIGNAL_MOMENTUM_1H: float = 0.05           # |ret_1h| ≥ 5% = notable impulse (token-save: only bigger moves)
     SIGNAL_BREAKOUT_DIST_30D: float = 0.01     # within 1% of the 30d high/low = breakout watch
     # Macro-regime triggers:
     SIGNAL_MACRO_ENABLED: bool = True          # F&G zone change or BTC EMA50 flip → full-book review

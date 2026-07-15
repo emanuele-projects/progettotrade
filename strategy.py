@@ -184,6 +184,11 @@ OPERATOR NOTES (manual context — TREAT AS HIGH-PRIORITY):
 - When a note targets a specific symbol, prioritize it for that symbol's decision. When global, factor it into the overall macro stance.
 - Operator notes do not override hard rules (max positions, SL/TP ranges) — but they should shift conviction, direction and choice of which symbols to trade.
 
+SELF-CORRECTION — LEARN FROM YOUR OWN TRACK RECORD:
+- On full evaluations you receive a "YOUR RECENT TRADING PERFORMANCE" block: your realized win-rate, net P&L, and a SELF-CORRECTION GUIDANCE line computed from your ACTUAL results.
+- Treat it as a mirror and change behavior accordingly. If your recent win-rate is poor, the fix is almost always to be MORE SELECTIVE — fewer, higher-conviction trades, stops with more room, lower leverage — NOT to trade more or chase harder. If one whole side (longs or shorts) keeps losing in the current regime, favor the other side.
+- A poor track record means your current reads are not working: change something, don't repeat it. A skipped marginal trade is a good outcome.
+
 CRITICAL CONSTRAINTS:
 - Output decisions only via the `submit_decisions` tool.
 - For each candidate, return exactly one decision (long, short or flat).
@@ -247,11 +252,15 @@ def build_user_prompt(
     operator_notes: list[dict] | None = None,
     trigger_lines: list[str] | None = None,
     focused: bool = False,
+    perf_review: str | None = None,
 ) -> str:
     parts: list[str] = []
     if trigger_lines:
         parts.append("=== TRIGGER (why you are being called now) ===")
         parts.extend(trigger_lines)
+        parts.append("")
+    if perf_review:
+        parts.append(perf_review)
         parts.append("")
     parts.append("=== MACRO ===")
     parts.append(
@@ -374,6 +383,7 @@ def decide(
     operator_notes: list[dict] | None = None,
     trigger_lines: list[str] | None = None,
     focused: bool = False,
+    perf_review: str | None = None,
 ) -> tuple[Decision, dict]:
     """Get decisions from the configured source. Returns (decision, usage);
     usage carries token counts (API mode) and the deciding model.
@@ -384,6 +394,7 @@ def decide(
         candidates, open_positions, fear_greed, btc_features, news,
         operator_notes=operator_notes,
         trigger_lines=trigger_lines, focused=focused,
+        perf_review=perf_review,
     )
 
     if CFG.DECISION_SOURCE == "file":
