@@ -205,13 +205,14 @@ def place_protective_orders(client: Client, symbol: str, entry_price: float, sid
     e.g. sl_pct=-0.30 with leverage=10 → price moves 3% adversely to trigger.
     Falls back to CFG defaults when per-trade values are missing (legacy rows).
 
-    NOTE: disabled on Binance Futures Testnet — the testnet routes conditional
-    orders through a separate "algo" system that doesn't reconcile with the
-    regular open-orders / cancel-all endpoints (causes phantom -4130 errors).
-    Real-time protection (risk engine) handles SL/TP during paper trading.
-    Re-enabled automatically on mainnet (USE_TESTNET=False) as backstop.
+    2026-07-15 (always-invested portfolio): ENABLED on testnet too — exchange-held
+    exits fire even when this process is down, and free the local risk engine to
+    act as backstop only. If the testnet's conditional-order subsystem misbehaves
+    (historical phantom -4130s), the WARN path below leaves the position without
+    server orders and the risk engine automatically keeps enforcing SL/TP for it
+    (PositionCache marks server_protected only when BOTH orders are live).
     """
-    if CFG.DRY_RUN or CFG.USE_TESTNET:
+    if CFG.DRY_RUN or (CFG.USE_TESTNET and not CFG.SERVER_SIDE_PROTECTION_ON_TESTNET):
         return
     lev = leverage if leverage is not None else CFG.LEVERAGE
     sl = sl_pct if sl_pct is not None else CFG.HARD_STOP_LOSS_PCT
@@ -247,27 +248,38 @@ def place_protective_orders(client: Client, symbol: str, entry_price: float, sid
 
 
 def cancel_protective_orders(client: Client, symbol: str) -> None:
-    if CFG.DRY_RUN or CFG.USE_TESTNET:
+    """Cancel BOTH order books for the symbol: the classic one and the algo/
+    conditional one. STOP_MARKET / TAKE_PROFIT_MARKET now live in the algo
+    subsystem (python-binance ≥1.0.37 routes them there) and are INVISIBLE to
+    the classic openOrders/cancel-all endpoints — pass conditional=True."""
+    if CFG.DRY_RUN or (CFG.USE_TESTNET and not CFG.SERVER_SIDE_PROTECTION_ON_TESTNET):
         return
-    try:
-        client.futures_cancel_all_open_orders(symbol=symbol)
-    except BinanceAPIException as e:
-        # -2011 = unknown order; harmless when there were none
-        if "2011" not in str(e):
-            journal.log_event("WARN", f"cancel_all on {symbol}: {e}")
+    for conditional in (False, True):
+        try:
+            client.futures_cancel_all_open_orders(symbol=symbol, conditional=conditional)
+        except BinanceAPIException as e:
+            # -2011 = unknown order; harmless when there were none
+            if "2011" not in str(e):
+                journal.log_event("WARN", f"cancel_all({'algo' if conditional else 'classic'}) on {symbol}: {e}")
+
+
+def protective_order_types(order: dict) -> str:
+    """Order type across payload dialects (classic: `type`; algo: `orderType`)."""
+    return order.get("orderType") or order.get("type") or order.get("origType") or ""
 
 
 def ensure_protective_orders(client: Client, position: "Position") -> None:
     """Idempotent: if SL or TP missing for this open position, replace the pair."""
-    if CFG.DRY_RUN or CFG.USE_TESTNET:
+    if CFG.DRY_RUN or (CFG.USE_TESTNET and not CFG.SERVER_SIDE_PROTECTION_ON_TESTNET):
         return
     try:
-        open_orders = client.futures_get_open_orders(symbol=position.symbol)
+        open_orders = list(client.futures_get_open_orders(symbol=position.symbol, conditional=True))
+        open_orders += list(client.futures_get_open_orders(symbol=position.symbol))
     except BinanceAPIException as e:
         journal.log_event("WARN", f"get_open_orders {position.symbol}: {e}")
         return
-    has_sl = any(o.get("type") == "STOP_MARKET" for o in open_orders)
-    has_tp = any(o.get("type") == "TAKE_PROFIT_MARKET" for o in open_orders)
+    has_sl = any(protective_order_types(o) == "STOP_MARKET" for o in open_orders)
+    has_tp = any(protective_order_types(o) == "TAKE_PROFIT_MARKET" for o in open_orders)
     if has_sl and has_tp:
         return
     cancel_protective_orders(client, position.symbol)
@@ -318,6 +330,10 @@ def open_position(client: Client, symbol: str, side: str, margin_usdt: float,
         if clamped != sl_pct:
             journal.log_event("WARN", f"{symbol}: SL {sl_pct:+.2f} beyond liq-safe range at {lev}x — clamped to {clamped:+.2f}")
             sl_pct = clamped
+
+    # Re-entry hygiene: a stale closePosition SL/TP left over from a previous
+    # position on this symbol would close the NEW position at the wrong level.
+    cancel_protective_orders(client, symbol)
 
     ensure_leverage_and_margin(client, symbol, leverage=lev)
     ticker = client.futures_symbol_ticker(symbol=symbol)

@@ -45,23 +45,23 @@ def build_performance_review(client, lookback_days: int = 7,
 
     if wr < 25:
         guidance = (
-            "Recent win-rate is POOR — most entries have been wrong. Be FAR more selective: "
-            "take only A+ setups where trend, flow and OI all agree, and pass on everything marginal. "
-            "Trade FEWER positions, prefer 5x-10x over 15x-20x, and set stops wide enough that ordinary "
-            "intraday noise on a volatile mover does not tag them. If one side (long or short) keeps failing "
-            "in the current regime, favor the other. When there is no clean read, stay FLAT — a skipped trade "
-            "beats a flip-flop loss."
+            "Recent win-rate is POOR — most entries have been wrong. Keep the book invested (the mandate "
+            "stands) but de-risk it HARD: drop the whole book to 5x-10x, widen stops so intraday noise "
+            "can't tag them, balance longs and shorts toward market-neutral, and reserve 15x-20x for "
+            "nothing. Rotate toward whichever side/setups HAVE been working; if one side keeps failing "
+            "in this regime, tilt the balance the other way. Change the mix — not the investment level."
         )
     elif wr < 45:
         guidance = (
-            "Below breakeven. Tighten entry criteria — skip low-conviction setups and act only on clear "
-            "momentum with confirming flow. Do not force trades, and do not re-open a name you were just "
-            "stopped out of unless it genuinely re-qualifies."
+            "Below breakeven. Keep the book at the mandate but favor lower leverage on marginal picks, "
+            "confirmatory flow on every entry, and do not re-open a name you were just stopped out of "
+            "unless it genuinely re-qualifies. Prefer rotating into fresher setups over forcing re-entries."
         )
     else:
         guidance = (
-            "Win-rate is acceptable — keep the discipline that is working: stay selective, size stops for "
-            "the mover's volatility, and let winners run toward the take-profit instead of closing early."
+            "Win-rate is acceptable — keep the discipline that is working: size stops for the mover's "
+            "volatility, keep the book balanced and topped up, and let winners run toward the take-profit "
+            "instead of closing early."
         )
 
     return "\n".join([

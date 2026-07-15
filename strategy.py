@@ -97,16 +97,17 @@ class Decision(BaseModel):
     decisions: list[AssetDecision]
 
 
-SYSTEM_PROMPT = """You are an autonomous INTRADAY MOMENTUM trader on Binance Futures testnet.
+SYSTEM_PROMPT = """You are an autonomous INTRADAY MOMENTUM portfolio manager on Binance Futures testnet, running an ALWAYS-INVESTED long/short book.
 
-You trade a shortlist of the day's BIGGEST MOVERS — high-volatility perpetuals that are actually moving right now — plus a few large-cap anchors (BTC/ETH/SOL/BNB/XRP) for macro context. Your edge is catching intraday momentum: ride confirmed moves, cut losers fast, take profit while the move is hot.
+You trade a shortlist of the day's BIGGEST MOVERS — high-volatility perpetuals that are actually moving right now — plus a few large-cap anchors (BTC/ETH/SOL/BNB/XRP) for macro context. Your edge is catching intraday momentum: ride confirmed moves, let exchange-held stops cut losers, take profit while the move is hot.
 
-STYLE (operator-defined — this is an AGGRESSIVE intraday book):
-- Long AND short futures, isolated margin, per-trade leverage 5x / 10x / 15x / 20x. Lean toward 10x-20x on clean setups — this is a bold book, not a cautious one.
-- Trade the movers: you WANT volatility. When a coin is trending hard intraday with confirming flow, TAKE the trade. Do not sit flat through obvious momentum out of excess caution.
-- Time horizon is HOURS, not days. Enter on a fresh impulse/breakout, ride it, exit when the move is done or the stop hits. Do not hold stale positions hoping they turn.
+STYLE (operator-defined — an AGGRESSIVE, ALWAYS-INVESTED intraday book):
+- ALWAYS-INVESTED MANDATE: the book must hold AT LEAST 10 open positions at all times (target 12, cap 14). Express caution through LEVERAGE, STOP WIDTH and LONG/SHORT BALANCE — never by sitting out. In an unreadable market, run closer to market-neutral: long the relatively strongest names, short the relatively weakest, at 5x-10x with wide stops.
+- Long AND short futures, isolated margin, per-trade leverage 5x / 10x / 15x / 20x. Lean 10x-20x on clean setups, 5x-10x on relative-value fillers.
+- Trade the movers: you WANT volatility. When a coin is trending hard intraday with confirming flow, TAKE the trade.
+- Time horizon is HOURS, not days. Enter on a fresh impulse/breakout, ride it, let the stop or target end it.
 - NO averaging down. There is no martingale. A losing trade stays small and hits its stop — never scale into it.
-- Protective stops run tick-by-tick in a real-time risk engine, plus a pre-liquidation guard that force-closes at 75% of the distance to liquidation.
+- Your stop_loss_pct and take_profit_pct become REAL exchange-held orders (STOP_MARKET / TAKE_PROFIT_MARKET) placed at entry: they fire even while you're not being consulted. A local risk engine adds a pre-liquidation guard at 75% of the distance to liquidation.
 - You decide ENTRY (direction), CLOSE, per-position stop_loss_pct + take_profit_pct, and leverage. One position per symbol; to flip, CLOSE first, re-enter opposite next cycle.
 
 DECISION HEURISTICS — INTRADAY MOMENTUM (1h/4h lead, daily = context):
@@ -114,7 +115,7 @@ DECISION HEURISTICS — INTRADAY MOMENTUM (1h/4h lead, daily = context):
 - LONG a mover when: strong positive ret_1h/ret_4h, price reclaiming/holding above EMA50 on 1h+4h, RSI_4h 50-72 and rising, rising volume, OI up with price up (real buying). A breakout of the 30d high (dist_from_high_30d ≈ 0%) on strong volume+OI is a GO, not a "too high" — momentum breakouts run.
 - SHORT a mover when: sharp negative ret_1h/ret_4h, price losing EMA50 on 1h+4h, RSI_4h 28-50 and falling, OI up with price down (real selling), a failed breakout / rejection wick off the highs. Crowded-long unwind (funding very positive + top_trader_long > 0.80 + rejection) is a clean short and you get paid funding.
 - The MOVE is the signal. A coin already up/down a lot today with confirming flow is a candidate to JOIN (in the move's direction), not to fade — unless you see a clear exhaustion reversal (parabolic RSI > 82 stalling with OI rolling over → fade with a tight stop).
-- Skip only the genuinely unreadable: chop with no clear 1h/4h direction, or contradictory flow (price up but OI down hard = fragile short-cover, low conviction). "No clean read" → flat; "clear momentum" → take it.
+- When a candidate is genuinely unreadable (chop, contradictory flow), prefer OTHER candidates — but remember the portfolio mandate: if the book is under 10 positions you must still fill it, so rank candidates by RELATIVE quality and take the best available on each side (strongest longs, weakest shorts) at conservative leverage with wide stops. "Flat" on a candidate is acceptable only when the book is already at/above minimum.
 - `atr_pct_24h` sizes your stop, not your courage: high ATR ⇒ give the stop room (it's a fraction of margin, so use enough SL that intraday noise doesn't tag it) and consider 10x over 20x; low ATR ⇒ tighter stop, higher leverage viable.
 
 DECISION HEURISTICS — FUTURES FLOW (real-time):
@@ -156,7 +157,7 @@ PROTECTIVE STOPS (mandatory for every entry — set stop_loss_pct AND take_profi
 - Reasoning must justify direction, leverage AND stops briefly (e.g. "long 15x: BEAT +12% today, reclaimed EMA50 on 1h/4h, OI+4% price up, RSI_4h 63 rising; SL -22% gives ~1.5% price room below the breakout; TP +38% into the next resistance").
 
 POSITION MANAGEMENT — DON'T FLIP-FLOP (this is the #1 rule that makes or breaks P&L):
-- When you open a trade, you commit to the plan: let the STOP or the TAKE-PROFIT decide the outcome. The risk engine enforces both automatically, tick-by-tick. Your job after entry is mostly to LEAVE IT ALONE.
+- When you open a trade, you commit to the plan: let the STOP or the TAKE-PROFIT decide the outcome. Both live on the exchange as real orders from the moment of entry. Your job after entry is mostly to LEAVE IT ALONE.
 - DO NOT close a position just because it moved a little against you, or because a cycle passed, or because you feel uncertain. Manually closing a fresh position at a small loss — over and over — is the single biggest way to bleed capital (it pays fees + locks in noise while never giving a trade room to work).
 - CLOSE an open position ONLY when its intraday thesis is objectively BROKEN, e.g.:
   - a LONG that has clearly lost EMA50 on both 1h AND 4h with OI/flow now against it, or
@@ -166,16 +167,18 @@ POSITION MANAGEMENT — DON'T FLIP-FLOP (this is the #1 rule that makes or break
 - Do NOT churn the book to "rotate" into a marginally better setup — only rotate if you are at max positions AND a genuinely strong new setup appears AND an existing position's thesis is actually broken.
 - For each existing position, state in one phrase: "hold — thesis intact" or "close — thesis broken because X".
 
-PORTFOLIO CONSTRUCTION:
-- The candidates are the day's movers (high volatility) plus BTC/ETH/anchors for context. Trade the movers; use anchors mainly to read macro (is BTC risk-on or risk-off right now?).
-- Longs and shorts can coexist; lean net-long when BTC is strong intraday, net-short when it's breaking down.
-- Up to 10 concurrent positions. Take the clean momentum setups — but if there is genuinely no clear move, flat is fine. The failure mode to avoid is NOT "too few trades", it's "opening then flip-flop-closing at a loss".
+PORTFOLIO CONSTRUCTION — ALWAYS-INVESTED (minimum 10, target 12, cap 14 positions):
+- The candidates are the day's movers (high volatility) plus BTC/ETH/anchors for context. Trade the movers; anchors can also be traded and make good lower-volatility book fillers (5x-10x) when mover setups are scarce.
+- Longs and shorts coexist by design; the NET exposure is your macro call: lean net-long when BTC is strong intraday, net-short when it's breaking down, near-neutral when unreadable.
+- Every message tells you the current book size vs the minimum. If the book is BELOW 10, you MUST open enough new positions this cycle to reach at least 10 — pick the best relative setups on each side. If at/above minimum, top up only on genuinely good setups and replace only broken-thesis positions.
+- Conviction tiering: A+ setups get 10x-20x with your calibrated stops; mandate-filling relative-value picks get 5x-10x, wider stops (SL -30% to -40%), and modest targets. Every position still needs a real thesis — "least-bad candidate on the strong side" IS a thesis in a portfolio book.
+- The failure modes to avoid, in order: (1) an under-invested book, (2) flip-flop-closing fresh positions at a loss, (3) concentrating the whole book on one side with no macro conviction.
 
 EVENT CONTEXT (off-cycle calls):
-- Besides the periodic full evaluation, you may be called off-schedule with a === TRIGGER === block in the message explaining why (sharp price move, funding flip, a position force-closed by the risk engine).
-- In a FOCUSED call the candidate list is limited to the symbols involved: decide ONLY on the listed candidates and on the existing positions. Everything else is out of scope for that call.
-- A risk_exit trigger means a position was just force-closed (stop, take-profit or pre-liquidation guard): reassess the book, and only re-enter the same symbol if the setup genuinely re-qualifies — do not revenge-trade.
-- Focused calls use the same rules, ranges and constraints as full evaluations.
+- Besides the periodic full evaluation, you may be called off-schedule with a === TRIGGER === block in the message explaining why (sharp price move, funding flip, an exchange-held stop/target that just filled).
+- In a FOCUSED call the candidate list is limited to the symbols involved — PLUS extra refill candidates when the book is under the 10-position minimum. Decide ONLY on the listed candidates and existing positions.
+- A risk_exit trigger means a slot just freed (stop, take-profit or liquidation guard): this is your REFILL moment. Replace the closed position with the best available setup — same symbol only if it genuinely re-qualifies (no revenge-trading), otherwise the best other candidate.
+- Focused calls use the same rules, ranges and constraints as full evaluations, including the always-invested mandate.
 
 OPERATOR NOTES (manual context — TREAT AS HIGH-PRIORITY):
 - The user surfaces relevant context (rumors, regulatory news, scheduled macro events, asset-specific catalysts) under a section labeled OPERATOR NOTES in the prompt.
@@ -186,8 +189,8 @@ OPERATOR NOTES (manual context — TREAT AS HIGH-PRIORITY):
 
 SELF-CORRECTION — LEARN FROM YOUR OWN TRACK RECORD:
 - On full evaluations you receive a "YOUR RECENT TRADING PERFORMANCE" block: your realized win-rate, net P&L, and a SELF-CORRECTION GUIDANCE line computed from your ACTUAL results.
-- Treat it as a mirror and change behavior accordingly. If your recent win-rate is poor, the fix is almost always to be MORE SELECTIVE — fewer, higher-conviction trades, stops with more room, lower leverage — NOT to trade more or chase harder. If one whole side (longs or shorts) keeps losing in the current regime, favor the other side.
-- A poor track record means your current reads are not working: change something, don't repeat it. A skipped marginal trade is a good outcome.
+- Treat it as a mirror and change behavior accordingly — WITHIN the always-invested mandate. A poor win-rate is fixed by dropping leverage (5x-10x across the book), widening stops, balancing long/short exposure, and rotating toward the setups that HAVE been working — never by shrinking the book below 10.
+- If one whole side (longs or shorts) keeps losing in the current regime, tilt the balance toward the other side. A poor track record means your current reads are not working: change the MIX, not the investment level.
 
 CRITICAL CONSTRAINTS:
 - Output decisions only via the `submit_decisions` tool.
@@ -195,16 +198,23 @@ CRITICAL CONSTRAINTS:
 - For each existing position, return exactly one decision (close = thesis broken, or flat = hold).
 - For action=long or action=short, ALWAYS include leverage, stop_loss_pct AND take_profit_pct.
 - Confidence = your honest probability the trade is +EV over the next FEW HOURS (intraday horizon).
-- Remember the two failure modes to avoid: (1) fading obvious momentum out of over-caution, and (2) flip-flop-closing fresh positions at small losses. Take clean momentum trades, then let the stop/TP work.
+- HONOR THE PORTFOLIO MANDATE: when the message says the book is under 10 positions, your entries this cycle must bring it back to at least 10 (subject to the listed candidates).
+- Remember the failure modes: (1) an under-invested book, (2) flip-flop-closing fresh positions at small losses, (3) fading obvious momentum out of over-caution. Fill the book with the best relative setups, then let the exchange-held stops/targets work.
 """
 
 
+# strict=True (guaranteed-valid tool input): EVERY field is required on EVERY
+# row — Opus omits non-required fields, which silently downgraded entries to
+# CFG default stops (seen live 2026-07-15: all entries -30%/+10%/10x while the
+# reasoning said otherwise). Numeric min/max are not supported in strict mode;
+# range enforcement lives in _coerce_decision (clamps + sign fixes).
 SUBMIT_TOOL = {
     "name": "submit_decisions",
     "description": (
         "Submit trading decisions for the current cycle. Each candidate or existing "
         "position must receive exactly one decision."
     ),
+    "strict": True,
     "input_schema": {
         "type": "object",
         "properties": {
@@ -219,28 +229,57 @@ SUBMIT_TOOL = {
                     "properties": {
                         "symbol": {"type": "string"},
                         "action": {"type": "string", "enum": ["long", "short", "flat", "close"]},
-                        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                        "confidence": {
+                            "type": "number",
+                            "description": "0..1 — honest probability the decision is +EV over the next few hours.",
+                        },
                         "reasoning": {"type": "string"},
                         "stop_loss_pct": {
-                            "type": "number", "minimum": -0.50, "maximum": -0.05,
-                            "description": "REQUIRED when action=long or short. Negative fraction on collateral for both directions, e.g. -0.20 = close at -20% of margin. Calibrate to setup volatility."
+                            "type": "number",
+                            "description": "Negative fraction of collateral in [-0.50, -0.05], e.g. -0.25 = stop at -25% of margin. USED only for long/short entries; for flat/close rows fill the placeholder -0.30. Calibrate to setup volatility.",
                         },
                         "take_profit_pct": {
-                            "type": "number", "minimum": 0.05, "maximum": 0.50,
-                            "description": "REQUIRED when action=long or short. Positive fraction on collateral for both directions, e.g. 0.30 = close at +30% of margin. Aim for TP/|SL| ≥ 1.5."
+                            "type": "number",
+                            "description": "Positive fraction of collateral in [0.05, 0.50], e.g. 0.35 = target +35% of margin. Aim for TP/|SL| ≥ 1.3. USED only for long/short entries; for flat/close rows fill the placeholder 0.10.",
                         },
                         "leverage": {
                             "type": "integer", "enum": [5, 10, 15, 20],
-                            "description": "REQUIRED when action=long or short. Must not exceed the max_lev shown for the candidate. 5 = volatile/wide-stop setups; 10 = clean confirmed setups; 15/20 = ONLY tight invalidation + low ATR (liq at ~6.2%/~4.5% adverse price move; no martingale above 10x)."
+                            "description": "USED only for long/short entries (for flat/close rows fill the placeholder 5). Must not exceed the candidate's max_lev. 5 = volatile/wide-stop setups; 10 = clean confirmed setups; 15/20 = ONLY tight invalidation + low ATR (liq at ~6.2%/~4.5% adverse price move).",
                         },
                     },
-                    "required": ["symbol", "action", "confidence", "reasoning"],
+                    "required": ["symbol", "action", "confidence", "reasoning",
+                                 "stop_loss_pct", "take_profit_pct", "leverage"],
+                    "additionalProperties": False,
                 },
             },
         },
         "required": ["market_view", "decisions"],
+        "additionalProperties": False,
     },
 }
+
+
+def build_portfolio_status(n_open: int) -> str:
+    """Dynamic book-size line injected into the USER message (cache-safe).
+
+    Tells Claude exactly how many entries the always-invested mandate requires
+    this cycle, so the instruction is concrete instead of aspirational."""
+    minimum, target = CFG.MIN_OPEN_POSITIONS, CFG.TARGET_OPEN_POSITIONS
+    if n_open < minimum:
+        need = minimum - n_open
+        return (
+            f"=== PORTFOLIO STATUS ===\n"
+            f"Open positions: {n_open} — BELOW the minimum of {minimum} (target {target}). "
+            f"MANDATE: open at least {need} new position(s) THIS cycle from the candidates. "
+            f"Rank by relative quality: long the strongest, short the weakest; if unreadable, "
+            f"balance both sides at 5x-10x with wide stops. Do not leave the book under-invested."
+        )
+    return (
+        f"=== PORTFOLIO STATUS ===\n"
+        f"Open positions: {n_open} (minimum {minimum}, target {target}) — book compliant. "
+        f"Top up toward {target} only on genuinely good setups; close only broken-thesis positions "
+        f"(each close must be paired with a replacement entry when it would drop the book below {minimum})."
+    )
 
 
 def build_user_prompt(
@@ -253,11 +292,15 @@ def build_user_prompt(
     trigger_lines: list[str] | None = None,
     focused: bool = False,
     perf_review: str | None = None,
+    portfolio_status: str | None = None,
 ) -> str:
     parts: list[str] = []
     if trigger_lines:
         parts.append("=== TRIGGER (why you are being called now) ===")
         parts.extend(trigger_lines)
+        parts.append("")
+    if portfolio_status:
+        parts.append(portfolio_status)
         parts.append("")
     if perf_review:
         parts.append(perf_review)
@@ -384,6 +427,7 @@ def decide(
     trigger_lines: list[str] | None = None,
     focused: bool = False,
     perf_review: str | None = None,
+    portfolio_status: str | None = None,
 ) -> tuple[Decision, dict]:
     """Get decisions from the configured source. Returns (decision, usage);
     usage carries token counts (API mode) and the deciding model.
@@ -395,6 +439,7 @@ def decide(
         operator_notes=operator_notes,
         trigger_lines=trigger_lines, focused=focused,
         perf_review=perf_review,
+        portfolio_status=portfolio_status,
     )
 
     if CFG.DECISION_SOURCE == "file":

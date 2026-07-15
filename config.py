@@ -47,13 +47,28 @@ class Config:
     MARGIN_TYPE: str = "ISOLATED"
     INITIAL_DEPLOY_PCT: float = 0.50         # 50% margin deployed initially
     RESERVE_FOR_AVERAGING_PCT: float = 0.50  # 50% kept liquid for martingale
-    MAX_CONCURRENT_POSITIONS: int = 10
-    POSITION_MARGIN_PCT: float = 0.05        # 5% per entry × 10 = 50% deploy
+    MAX_CONCURRENT_POSITIONS: int = 14       # portfolio mode: min 10, target 12, cap 14
+    POSITION_MARGIN_PCT: float = 0.05        # 5% per entry × 12 target = ~60% margin deployed
 
     # ---- Leverage v3 (5x-20x, per-trade, agent-chosen) ----
     ALLOWED_LEVERAGES: tuple[int, ...] = (5, 10, 15, 20)
     MAX_LEVERAGE: int = 20
     LEVERAGE_BRACKET_REFRESH_HOURS: int = 24  # per-symbol max-leverage cache TTL
+
+    # ---- Always-invested portfolio (2026-07-15, user mandate) ----
+    # The book must hold at least MIN_OPEN_POSITIONS at all times, aiming for
+    # TARGET_OPEN_POSITIONS. Caution is expressed through leverage/stops and
+    # long-short balance, not by sitting flat. When a server-side SL/TP fill
+    # empties a slot, the user-stream handler emits a risk_exit trigger and the
+    # next (batched) Claude call refills strategically.
+    MIN_OPEN_POSITIONS: int = 10
+    TARGET_OPEN_POSITIONS: int = 12
+
+    # ---- Server-side protection (exchange-held SL/TP orders) ----
+    # Place STOP_MARKET + TAKE_PROFIT_MARKET (closePosition) on the exchange at
+    # entry: exits fire even if this process is down, and the local risk engine
+    # demotes to backstop (liq-guard + fallback when order placement failed).
+    SERVER_SIDE_PROTECTION_ON_TESTNET: bool = True
 
     # ---- Real-time risk engine ----
     RISK_LIQ_GUARD_FRACTION: float = 0.75     # force-close at 75% of est. liquidation distance

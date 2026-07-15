@@ -51,6 +51,9 @@ class CachedPosition:
     liquidation_price: float  # exchange-computed; 0 = unknown → estimate
     martingale_levels: int = 0
     last_add_monotonic: float = 0.0
+    # True when BOTH exchange-held SL and TP orders are live for this symbol:
+    # the exchange owns the exit and the engine only keeps the liq-guard.
+    server_protected: bool = False
 
 
 class PositionCache:
@@ -95,6 +98,24 @@ class PositionCache:
     def reconcile(self, client) -> None:
         """Re-pull REST truth. Called from main thread (post-execution / cycle)
         and from the watchdog thread (its own client) — never from WS callbacks."""
+        # Which symbols have BOTH exchange-held protective orders live? Those
+        # positions belong to the exchange for SL/TP; the engine only guards
+        # liquidation. One un-parameterized call covers every symbol.
+        protected: set[str] = set()
+        try:
+            order_types: dict[str, set[str]] = {}
+            # Conditional (algo) book holds the STOP_MARKET/TAKE_PROFIT_MARKET
+            # pairs on current Binance; the classic book is merged as belt+braces.
+            all_orders = list(client.futures_get_open_orders(conditional=True))
+            all_orders += list(client.futures_get_open_orders())
+            for o in all_orders:
+                t = execution.protective_order_types(o)
+                order_types.setdefault(o.get("symbol", ""), set()).add(t)
+            protected = {s for s, kinds in order_types.items()
+                         if "STOP_MARKET" in kinds and "TAKE_PROFIT_MARKET" in kinds}
+        except Exception as e:
+            log.warning(f"open-orders check failed (engine keeps enforcing SL/TP): {e}")
+
         fresh: dict[str, CachedPosition] = {}
         for p in execution.get_open_positions(client):
             sl_pct, tp_pct = journal.get_position_targets(p.symbol)
@@ -106,6 +127,7 @@ class PositionCache:
                 liquidation_price=p.liquidation_price,
                 martingale_levels=execution.count_martingale_levels(p.symbol),
                 last_add_monotonic=prev.last_add_monotonic if prev else 0.0,
+                server_protected=p.symbol in protected,
             )
         with self._lock:
             gone = set(self._positions) - set(fresh)
@@ -255,15 +277,17 @@ class RiskEngine(threading.Thread):
                 self._close(cached, mark, "liq_guard", "estimated liq distance")
                 return
 
-        # (2) hard stop-loss
-        if roe <= cached.sl_pct:
-            self._close(cached, mark, "sl", f"target {cached.sl_pct:+.0%}")
-            return
-
-        # (3) take-profit
-        if roe >= cached.tp_pct:
-            self._close(cached, mark, "tp", f"target {cached.tp_pct:+.0%}")
-            return
+        # (2)+(3) SL / TP — only when the exchange does NOT hold the exit orders.
+        # server_protected positions exit via their STOP_MARKET/TAKE_PROFIT_MARKET
+        # (which fire even if this process dies); the engine stays out of the way
+        # to avoid double-execution and remains the liq-guard of last resort.
+        if not cached.server_protected:
+            if roe <= cached.sl_pct:
+                self._close(cached, mark, "sl", f"target {cached.sl_pct:+.0%}")
+                return
+            if roe >= cached.tp_pct:
+                self._close(cached, mark, "tp", f"target {cached.tp_pct:+.0%}")
+                return
 
         # (4) martingale — deterministic averaging. DISABLED by default
         #     (MARTINGALE_ENABLED=False): averaging into losers amplified the

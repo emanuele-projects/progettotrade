@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import queue
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime, timezone
@@ -224,6 +225,10 @@ def baseline_cycle(client: Client, log: logging.Logger,
         market_state.set_held({p["symbol"] for p in open_serialized})
 
     universe = data.filter_universe()
+    # The universe is built from MAINNET stats but we trade on the testnet,
+    # which lists fewer symbols: drop the untradable ones NOW so they don't
+    # burn portfolio-mandate slots on entries that would be skipped anyway.
+    universe = [s for s in universe if execution.symbol_tradable(client, s)]
     if market_state is not None and universe:
         market_state.set_watch(set(universe) | set(LARGE_CAP_ANCHORS))
     if not universe:
@@ -258,11 +263,16 @@ def baseline_cycle(client: Client, log: logging.Logger,
     if perf_review:
         log.info("self-correction: " + perf_review.splitlines()[1])  # the win-rate/net line
 
+    portfolio_status = strategy.build_portfolio_status(len(open_serialized))
+    if len(open_serialized) < CFG.MIN_OPEN_POSITIONS:
+        log.info(f"portfolio under minimum: {len(open_serialized)}/{CFG.MIN_OPEN_POSITIONS}")
+
     log.info("calling Claude for decisions…")
     decision, usage = strategy.decide(
         candidate_features, open_serialized, fg, btc_features, news,
         operator_notes=operator_notes,
         perf_review=perf_review,
+        portfolio_status=portfolio_status,
     )
     journal.log_decision(
         market_view=decision.market_view,
@@ -316,8 +326,24 @@ def focused_cycle(client: Client, log: logging.Logger, triggers: list["events.Tr
     position_cache.reconcile(client)
 
     affected = list({t.symbol for t in triggers if t.symbol})[:5]
+
+    # Always-invested refill: when the book is under the minimum, a focused call
+    # must be able to REPLACE the closed slots — extend the candidate list with
+    # the current best movers (excluding held/affected) so Claude has options.
+    held_syms = {p["symbol"] for p in open_serialized}
+    shortfall = CFG.MIN_OPEN_POSITIONS - len(open_serialized)
+    refill: list[str] = []
+    if shortfall > 0:
+        try:
+            refill = [s for s in data.filter_universe()
+                      if s not in held_syms and s not in affected
+                      and execution.symbol_tradable(client, s)][:max(shortfall + 3, 6)]
+            log.info(f"refill candidates (+{len(refill)}): {','.join(refill)}")
+        except Exception as e:
+            log.warning(f"refill universe failed: {e}")
+
     candidate_features = []
-    for sym in affected:
+    for sym in affected + refill:
         tier = "large_cap" if sym in _LARGE_CAP_SET else "mid_cap"
         try:
             candidate_features.append(data.compute_features(
@@ -337,6 +363,7 @@ def focused_cycle(client: Client, log: logging.Logger, triggers: list["events.Tr
         candidate_features, open_serialized, fg, btc_features, news=[],
         operator_notes=operator_notes,
         trigger_lines=trigger_lines, focused=True,
+        portfolio_status=strategy.build_portfolio_status(len(open_serialized)),
     )
     trigger_tag = ",".join(sorted({t.kind for t in triggers}))
     journal.log_decision(
@@ -412,6 +439,45 @@ def main() -> None:
 
     user_stream.on_account_update = _on_account_update
 
+    # Exchange-held SL/TP fills: the exchange just closed a position on its own.
+    # Emit a risk_exit trigger (→ strategic refill call) and remember the symbol
+    # so the surviving sibling order (closePosition SL or TP) gets cancelled.
+    # WS-callback context: no REST, no SQLite — only queue/set operations.
+    stale_orders_lock = threading.Lock()
+    stale_order_syms: set[str] = set()
+
+    def _on_order_fill(o: dict) -> None:
+        order_type = o.get("ot") or o.get("o") or ""
+        if order_type not in ("STOP_MARKET", "TAKE_PROFIT_MARKET") or o.get("X") != "FILLED":
+            return
+        sym = o.get("s", "")
+        kind = "tp" if order_type == "TAKE_PROFIT_MARKET" else "sl"
+        with stale_orders_lock:
+            stale_order_syms.add(sym)
+        position_cache.needs_reconcile.set()
+        trigger_bus.emit(events.Trigger(
+            kind="risk_exit", symbol=sym,
+            detail=f"exchange {kind} filled @ {o.get('ap')} (realized {o.get('rp')})",
+        ))
+
+    user_stream.on_order_fill = _on_order_fill
+
+    def _cleanup_stale_orders() -> None:
+        """Cancel leftover sibling SL/TP on symbols whose position just closed.
+        Runs on the main thread each loop iteration (≤60s latency, benign)."""
+        with stale_orders_lock:
+            syms = set(stale_order_syms)
+            stale_order_syms.clear()
+        for sym in syms:
+            if position_cache.get(sym) is not None:
+                continue  # already re-entered; its fresh orders must survive
+            try:
+                execution.cancel_protective_orders(client, sym)
+                journal.log_event("SERVER_EXIT_CLEANUP",
+                                  f"{sym}: sibling protective order cancelled after exchange-held exit")
+            except Exception as e:
+                log.warning(f"stale-order cleanup {sym}: {e}")
+
     # Local signal scanner (free): the gatekeeper that decides WHEN Claude is
     # worth calling, so the baseline can be rare instead of every 30 min.
     signal_scanner = None
@@ -444,6 +510,7 @@ def main() -> None:
             if mode == "hard":
                 log.warning("KILL_SWITCH (hard) — shutting down.")
                 break
+            _cleanup_stale_orders()  # orphaned sibling SL/TP after exchange-held exits
             if mode == "soft":
                 if not soft_logged:
                     log.warning("KILL_SWITCH (soft) — trading paused; risk engine keeps "
