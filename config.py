@@ -149,10 +149,16 @@ class Config:
     CRYPTOPANIC_TOKEN: str = os.getenv("CRYPTOPANIC_TOKEN", "")  # optional
 
     # ---- Models ----
-    CLAUDE_MODEL: str = "claude-sonnet-4-6"
-    # 12-25 candidati × ~120 token di reasoning + market_view: 2000 troncava
-    # l'array decisions (visto il 2026-07-12); 4000 dà margine.
-    CLAUDE_MAX_TOKENS: int = 4000
+    # 2026-07-15: switched to Opus 4.8 (user request: more capable model).
+    # Only 1.67x Sonnet 4.6 per token ($5/$25 vs $3/$15); with the token-save
+    # call policy the daily cost stays ~$1.3-1.6. Cache still works (min
+    # cacheable prefix 4096 tokens on Opus, our prefix is ~4.1k+). NO thinking
+    # param: omitted = off on Opus 4.8, and forced tool_choice requires it off.
+    CLAUDE_MODEL: str = "claude-opus-4-8"
+    # Opus 4.7/4.8 tokenizer counts ~20-30% more tokens for the same text than
+    # Sonnet 4.6: baseline outputs measured ~3.3k would risk truncation at 4000
+    # (the same failure mode seen 2026-07-12 at 2000). 6000 gives headroom.
+    CLAUDE_MAX_TOKENS: int = 6000
 
     # ---- Decision source ----
     # "api"  = call the Anthropic API directly (needs credits on ANTHROPIC_API_KEY)
