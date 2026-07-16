@@ -94,8 +94,8 @@ title_col, logout_col = st.columns([8, 1])
 with title_col:
     st.title("Trading Bot")
     st.caption(
-        f"Paper trading · Auto-refresh {REFRESH_SECONDS}s · "
-        f"Capitale: ${TOTAL_CAPITAL_USDT:,.0f} su strategia Aggressive (Claude · long/short · leva per-trade · martingale)"
+        f"Paper trading (testnet) · Auto-refresh {REFRESH_SECONDS}s · "
+        f"Capitale: ${TOTAL_CAPITAL_USDT:,.0f} · portafoglio sempre investito (Claude {CFG.CLAUDE_MODEL} · long/short · leva per-trade · SL/TP sull'exchange)"
     )
 with logout_col:
     st.markdown("<div style='height: 1.5rem'></div>", unsafe_allow_html=True)
@@ -183,16 +183,13 @@ else:
 # ----------------------------------------------------------------------------
 # Aggressive value
 # ----------------------------------------------------------------------------
+# Headline value = LIVE account equity (wallet + unrealized P&L), queried from
+# Binance on every refresh — so it moves in real time, not only when a (4h)
+# cycle writes an equity row to the journal. The journal equity table still
+# feeds the historical curve lower down.
 agg_alloc = STRATEGY_ALLOCATIONS["aggressive"]
-s = eq_df[eq_df["source"] == "live"] if not eq_df.empty else eq_df
-if s.empty:
-    agg_value = agg_alloc
-    agg_pct = 0.0
-else:
-    first = float(s.iloc[0]["total_equity"])
-    last = float(s.iloc[-1]["total_equity"])
-    agg_pct = (last - first) / first if first else 0.0
-    agg_value = agg_alloc * (1 + agg_pct)
+agg_value = float(account["total_equity"])
+unrealized = float(account["unrealized_pnl"])
 
 total_value = agg_value
 total_pnl = total_value - TOTAL_CAPITAL_USDT
@@ -217,12 +214,14 @@ c1.metric(
 c2.metric(
     "Profitto/Perdita",
     f"${total_pnl:+,.2f}",
-    help="Differenza tra valore attuale e capitale iniziale.",
+    f"${unrealized:+,.2f} non realizzato",
+    help="Valore attuale meno capitale iniziale. Il delta sotto è il P&L 'sulla carta' delle posizioni aperte — questo si muove in tempo reale (ogni 30s).",
 )
 c3.metric(
     "Posizioni aperte",
-    f"{len(positions)} / {CFG.MAX_CONCURRENT_POSITIONS}",
-    help=f"Massimo {CFG.MAX_CONCURRENT_POSITIONS} posizioni simultanee, ${agg_alloc * CFG.POSITION_MARGIN_PCT:,.0f} di margine ognuna.",
+    f"{len(positions)} / {CFG.TARGET_OPEN_POSITIONS}",
+    f"min {CFG.MIN_OPEN_POSITIONS} · target {CFG.TARGET_OPEN_POSITIONS}",
+    help=f"Portafoglio sempre-investito: minimo {CFG.MIN_OPEN_POSITIONS}, target {CFG.TARGET_OPEN_POSITIONS}, massimo {CFG.MAX_CONCURRENT_POSITIONS} posizioni.",
 )
 c4.metric(
     "Esposizione live",
@@ -239,14 +238,12 @@ st.divider()
 # ============================================================================
 st.markdown("### Profilo strategia")
 st.caption(
-    f"Capitale ${agg_alloc:,.0f} · Long/Short · Leva 5x–{CFG.MAX_LEVERAGE}x decisa da Claude per trade · "
-    f"Max {CFG.MAX_CONCURRENT_POSITIONS} posizioni · "
+    f"Capitale ${agg_alloc:,.0f} · **Portafoglio sempre investito**: min {CFG.MIN_OPEN_POSITIONS} / target {CFG.TARGET_OPEN_POSITIONS} / max {CFG.MAX_CONCURRENT_POSITIONS} posizioni · "
+    f"Long/Short · Leva 5x–{CFG.MAX_LEVERAGE}x per trade · "
     f"Margine per entry ${agg_alloc * CFG.POSITION_MARGIN_PCT:,.0f} ({CFG.POSITION_MARGIN_PCT:.1%}) · "
-    f"Cap esposizione ${CFG.MAX_TOTAL_NOTIONAL_USDT:,.0f} · "
-    f"Martingale solo ≤{CFG.MARTINGALE_MAX_LEVERAGE}x (max {CFG.MARTINGALE_MAX_LEVELS} add) · "
-    f"SL/TP per posizione decisi da Claude, applicati in tempo reale via WebSocket + guardia pre-liquidazione · "
-    f"Universo {CFG.UNIVERSE_MAX_CANDIDATES} mid-cap + 5 large-cap ancore · "
-    f"Multi-timeframe (1h/4h/1d) + ATR + flow futures"
+    f"**SL/TP piazzati come ordini reali sull'exchange** (scattano anche a bot spento) + guardia pre-liquidazione locale · "
+    f"Modello {CFG.CLAUDE_MODEL} · auto-correzione sul track record · "
+    f"Universo {CFG.UNIVERSE_MAX_CANDIDATES} mover + 5 large-cap ancore · Multi-timeframe (1h/4h/1d) + ATR + flow futures"
 )
 
 st.divider()
@@ -379,7 +376,7 @@ st.divider()
 # Equity curves chart
 # ============================================================================
 st.markdown("### Andamento nel tempo")
-st.caption("Equity curve live della strategia Aggressive ($10.000 di partenza). Variazione percentuale.")
+st.caption(f"Equity curve della strategia (${agg_alloc:,.0f} di partenza), campionata a ogni ciclo del bot. Il valore in cima alla pagina è invece live (aggiornato ogni 30s).")
 
 if not eq_df.empty:
     eq_live = eq_df[eq_df["source"] == "live"]
