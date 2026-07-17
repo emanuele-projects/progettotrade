@@ -128,7 +128,7 @@ Non esponiamo la 8501 su internet. Apri un tunnel dal PC:
 ssh -i "C:\...\key" -L 8501:localhost:8501 ubuntu@<IP>
 ```
 Lascia la finestra aperta e vai su **http://localhost:8501**
-(password `DASHBOARD_PASSWORD` dal `.env`, oggi `tanc-trading-2026`).
+(la password è il valore di `DASHBOARD_PASSWORD` nel `.env` del server — mai committarla).
 
 ---
 
