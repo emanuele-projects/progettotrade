@@ -1,4 +1,4 @@
-"""Streamlit dashboard — multi-strategy, aggregate + granular, clean theme.
+"""Streamlit dashboard — fund-style report: money, exposure, positions, Claude's brain.
 
 Run:
   streamlit run dashboard.py
@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -19,14 +20,19 @@ from streamlit_autorefresh import st_autorefresh
 from config import CFG, STRATEGY_ALLOCATIONS, TOTAL_CAPITAL_USDT
 import execution
 import journal
-
-
-_SHADOWS_ENABLED = any(
-    STRATEGY_ALLOCATIONS.get(k, 0) > 0 for k in ("hodl", "dca", "conservative_2x")
-)
+import performance
 
 
 REFRESH_SECONDS = 30
+
+# Claude API pricing (USD per 1M tokens) for the cost panel. The journal stores
+# uncached input + output tokens; cache traffic isn't stored, so we add a small
+# flat adder per call as a declared approximation.
+_MODEL_PRICES = {
+    "claude-opus-4-8": (5.00, 25.00),
+    "claude-sonnet-4-6": (3.00, 15.00),
+}
+_CACHE_ADDER_PER_CALL = 0.004  # ~6k cache-read tokens/call — declared estimate
 
 
 st.set_page_config(
@@ -39,16 +45,13 @@ st.set_page_config(
 
 # ============================================================================
 # Login gate — single shared password from env (DASHBOARD_PASSWORD).
-# If env unset, dashboard refuses to serve. If set, user must type the password
-# once per browser session.
 # ============================================================================
 def _login_gate() -> None:
     expected = (os.getenv("DASHBOARD_PASSWORD") or "").strip()
     if not expected:
         st.error(
             "🔒 **Dashboard non configurata.**  \n"
-            "Imposta la variabile d'ambiente `DASHBOARD_PASSWORD` sul server "
-            "(su Railway: Variables del servizio) e fai un redeploy."
+            "Imposta la variabile d'ambiente `DASHBOARD_PASSWORD` sul server."
         )
         st.stop()
     if st.session_state.get("authenticated") is True:
@@ -69,12 +72,8 @@ def _login_gate() -> None:
 
 
 _login_gate()
-# Soft auto-refresh via Streamlit's own rerun mechanism — DOES NOT reset
-# session_state (so the user stays logged in across refreshes). The previous
-# meta http-equiv refresh caused a full page reload, which wiped the session.
 st_autorefresh(interval=REFRESH_SECONDS * 1000, key="auto_refresh_tick")
 
-# Subtle CSS polish: tighten spacing, soften card backgrounds
 st.markdown(
     """
     <style>
@@ -95,7 +94,7 @@ with title_col:
     st.title("Trading Bot")
     st.caption(
         f"Paper trading (testnet) · Auto-refresh {REFRESH_SECONDS}s · "
-        f"Capitale: ${TOTAL_CAPITAL_USDT:,.0f} · portafoglio sempre investito (Claude {CFG.CLAUDE_MODEL} · long/short · leva per-trade · SL/TP sull'exchange)"
+        f"Portafoglio sempre investito · Claude {CFG.CLAUDE_MODEL} · long/short · SL/TP sull'exchange"
     )
 with logout_col:
     st.markdown("<div style='height: 1.5rem'></div>", unsafe_allow_html=True)
@@ -112,44 +111,90 @@ def load_live_state() -> dict[str, Any]:
     client = execution.make_client()
     account = execution.get_account(client)
     positions = [p.__dict__ for p in execution.get_open_positions(client)]
-    return {"account": account, "positions": positions}
+    # Exchange-held protective orders (SL/TP live in the algo subsystem)
+    protection: dict[str, dict[str, float]] = {}
+    try:
+        for o in client.futures_get_open_orders(conditional=True):
+            sym = o.get("symbol", "")
+            typ = o.get("orderType") or o.get("type") or ""
+            trig = float(o.get("triggerPrice") or o.get("stopPrice") or 0)
+            protection.setdefault(sym, {})[typ] = trig
+    except Exception:
+        pass
+    return {"account": account, "positions": positions, "protection": protection}
+
+
+@st.cache_data(ttl=60)
+def load_realized_history() -> pd.DataFrame:
+    """Realized-P&L events from Binance income history (source of truth that
+    survives journal resets — the same data Claude's self-correction reads)."""
+    try:
+        client = execution.make_client()
+        rows = client.futures_income_history(incomeType="REALIZED_PNL", limit=1000)
+    except Exception:
+        return pd.DataFrame()
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame([
+        {"ts": pd.to_datetime(int(r["time"]), unit="ms", utc=True),
+         "symbol": r.get("symbol", ""), "pnl": float(r["income"])}
+        for r in rows
+    ]).sort_values("ts")
+    return df
+
+
+@st.cache_data(ttl=60)
+def load_perf_review_text() -> str | None:
+    """The exact self-correction block injected into Claude's prompt."""
+    try:
+        client = execution.make_client()
+        return performance.build_performance_review(client)
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=REFRESH_SECONDS)
 def load_journal() -> dict[str, pd.DataFrame]:
     if not Path(CFG.JOURNAL_DB).exists():
-        return {"equity": pd.DataFrame(), "trades": pd.DataFrame(), "decisions": pd.DataFrame()}
+        return {"equity": pd.DataFrame(), "trades": pd.DataFrame(),
+                "decisions": pd.DataFrame(), "opens": pd.DataFrame(),
+                "calls": pd.DataFrame(), "system_events": pd.DataFrame()}
     with sqlite3.connect(CFG.JOURNAL_DB) as c:
         equity = pd.read_sql_query(
             "SELECT ts, total_equity, source FROM equity ORDER BY ts ASC",
             c, parse_dates=["ts"],
         )
         trades = pd.read_sql_query(
-            "SELECT ts, symbol, side, qty, price, notional_usdt, kind, note "
-            "FROM trades ORDER BY id DESC LIMIT 30",
+            "SELECT ts, symbol, side, qty, price, notional_usdt, kind, note, trigger "
+            "FROM trades ORDER BY id DESC LIMIT 40",
             c, parse_dates=["ts"],
-        )  # side: LONG/SHORT — shown as Direzione
+        )
+        # Latest 'open' row per symbol: entry timestamp + what woke Claude up
+        opens = pd.read_sql_query(
+            "SELECT symbol, MAX(ts) AS opened_ts, trigger FROM trades "
+            "WHERE kind='open' GROUP BY symbol",
+            c, parse_dates=["opened_ts"],
+        )
         decisions = pd.read_sql_query(
             "SELECT ts, market_view, decisions_json, trigger, model, "
             "input_tokens, output_tokens FROM decisions "
             "ORDER BY id DESC LIMIT 5",
             c, parse_dates=["ts"],
         )
+        calls = pd.read_sql_query(
+            "SELECT ts, trigger, model, input_tokens, output_tokens "
+            "FROM decisions ORDER BY ts ASC",
+            c, parse_dates=["ts"],
+        )
         system_events = pd.read_sql_query(
             "SELECT ts, level, msg FROM events WHERE level IN "
             "('WS_STALE','FATAL','HALT','KILL_SOFT','RESUME','TRIGGER_DROPPED',"
-            "'RISK_BACKSTOP','ERROR','NOTIONAL_CAP','WARN') "
+            "'RISK_BACKSTOP','ERROR','NOTIONAL_CAP','WARN','SERVER_EXIT_CLEANUP') "
             "ORDER BY id DESC LIMIT 12",
             c, parse_dates=["ts"],
         )
     return {"equity": equity, "trades": trades, "decisions": decisions,
-            "system_events": system_events}
-
-
-@st.cache_data(ttl=REFRESH_SECONDS)
-def load_shadow_breakdowns() -> dict[str, list[dict[str, Any]]]:
-    import shadow
-    return shadow.get_all_breakdowns()
+            "opens": opens, "calls": calls, "system_events": system_events}
 
 
 def load_operator_notes() -> list[dict[str, Any]]:
@@ -157,7 +202,7 @@ def load_operator_notes() -> list[dict[str, Any]]:
 
 
 # ============================================================================
-# Live + journal + shadow
+# Load everything
 # ============================================================================
 try:
     live = load_live_state()
@@ -167,124 +212,398 @@ except Exception as e:
 
 account = live["account"]
 positions = live["positions"]
+protection = live["protection"]
 journal_data = load_journal()
 eq_df = journal_data["equity"]
+realized_df = load_realized_history()
 
-if _SHADOWS_ENABLED:
-    try:
-        shadow_breakdowns = load_shadow_breakdowns()
-    except Exception as e:
-        st.error(f"Errore nel caricare le strategie shadow: {e}")
-        shadow_breakdowns = {"hodl": [], "dca": [], "conservative_2x": []}
-else:
-    shadow_breakdowns = {"hodl": [], "dca": [], "conservative_2x": []}
-
-
-# ----------------------------------------------------------------------------
-# Aggressive value
-# ----------------------------------------------------------------------------
-# Headline value = LIVE account equity (wallet + unrealized P&L), queried from
-# Binance on every refresh — so it moves in real time, not only when a (4h)
-# cycle writes an equity row to the journal. The journal equity table still
-# feeds the historical curve lower down.
-agg_alloc = STRATEGY_ALLOCATIONS["aggressive"]
-agg_value = float(account["total_equity"])
+initial_capital = float(TOTAL_CAPITAL_USDT)          # baseline dal reset
+equity_now = float(account["total_equity"])           # wallet + non realizzato
+wallet_now = float(account["wallet_balance"])         # solo realizzato
 unrealized = float(account["unrealized_pnl"])
+available = float(account["available_balance"])
 
-total_value = agg_value
-total_pnl = total_value - TOTAL_CAPITAL_USDT
-total_pct = total_pnl / TOTAL_CAPITAL_USDT * 100 if TOTAL_CAPITAL_USDT else 0.0
-
+pnl_total = equity_now - initial_capital
+pnl_total_pct = pnl_total / initial_capital * 100 if initial_capital else 0.0
+pnl_realized = wallet_now - initial_capital           # incassato/perso davvero
 deployed_margin = sum(p["isolated_margin"] for p in positions) if positions else 0.0
 total_exposure = sum(p["qty"] * p["mark_price"] for p in positions) if positions else 0.0
+avg_leverage = (total_exposure / deployed_margin) if deployed_margin else 0.0
+
+long_exp = sum(p["qty"] * p["mark_price"] for p in positions if p["side"] == "LONG")
+short_exp = sum(p["qty"] * p["mark_price"] for p in positions if p["side"] == "SHORT")
+net_exp = long_exp - short_exp
+n_long = sum(1 for p in positions if p["side"] == "LONG")
+n_short = len(positions) - n_long
 
 
 # ============================================================================
-# AGGREGATE — top hero
+# SEZIONE 1 — I SOLDI (la domanda: quanto ho messo, quanto vale, quanto ho fatto)
 # ============================================================================
-st.markdown("### Vista d'insieme")
-
-c1, c2, c3, c4 = st.columns([1.3, 1, 1, 1])
-c1.metric(
-    "Valore totale ora",
-    f"${total_value:,.2f}",
-    f"{total_pct:+.2f}% vs ${TOTAL_CAPITAL_USDT:,.0f} iniziali",
-    help="Equity attuale della strategia aggressive (testnet).",
-)
-c2.metric(
-    "Profitto/Perdita",
-    f"${total_pnl:+,.2f}",
-    f"${unrealized:+,.2f} non realizzato",
-    help="Valore attuale meno capitale iniziale. Il delta sotto è il P&L 'sulla carta' delle posizioni aperte — questo si muove in tempo reale (ogni 30s).",
-)
-c3.metric(
-    "Posizioni aperte",
-    f"{len(positions)} / {CFG.TARGET_OPEN_POSITIONS}",
-    f"min {CFG.MIN_OPEN_POSITIONS} · target {CFG.TARGET_OPEN_POSITIONS}",
-    help=f"Portafoglio sempre-investito: minimo {CFG.MIN_OPEN_POSITIONS}, target {CFG.TARGET_OPEN_POSITIONS}, massimo {CFG.MAX_CONCURRENT_POSITIONS} posizioni.",
-)
-c4.metric(
-    "Esposizione live",
-    f"${total_exposure:,.0f}",
-    f"margine usato ${deployed_margin:,.0f}",
-    help="Somma del valore notional di tutte le posizioni aperte (margine × leva 10x).",
-)
-
-st.divider()
-
-
-# ============================================================================
-# Strategia: caratteristiche e parametri
-# ============================================================================
-st.markdown("### Profilo strategia")
+st.markdown("### 💰 I soldi")
 st.caption(
-    f"Capitale ${agg_alloc:,.0f} · **Portafoglio sempre investito**: min {CFG.MIN_OPEN_POSITIONS} / target {CFG.TARGET_OPEN_POSITIONS} / max {CFG.MAX_CONCURRENT_POSITIONS} posizioni · "
-    f"Long/Short · Leva 5x–{CFG.MAX_LEVERAGE}x per trade · "
-    f"Margine per entry ${agg_alloc * CFG.POSITION_MARGIN_PCT:,.0f} ({CFG.POSITION_MARGIN_PCT:.1%}) · "
-    f"**SL/TP piazzati come ordini reali sull'exchange** (scattano anche a bot spento) + guardia pre-liquidazione locale · "
-    f"Modello {CFG.CLAUDE_MODEL} · auto-correzione sul track record · "
-    f"Universo {CFG.UNIVERSE_MAX_CANDIDATES} mover + 5 large-cap ancore · Multi-timeframe (1h/4h/1d) + ATR + flow futures"
+    f"Capitale iniziale = saldo reale al reset del 15/07/2026. "
+    f"P&L totale = valore di adesso − capitale iniziale, scomposto in **realizzato** "
+    f"(trade già chiusi, soldi veri in cassa) e **sulla carta** (posizioni ancora aperte)."
 )
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("Capitale iniziale", f"${initial_capital:,.2f}",
+          help="Baseline del 15/07/2026 (reset pulito, posizioni azzerate). Ogni P&L è misurato da qui.")
+c2.metric("Valore conto ORA", f"${equity_now:,.2f}",
+          f"{pnl_total_pct:+.2f}% dall'inizio",
+          help="Equity live: cassa + P&L delle posizioni aperte ai prezzi attuali. Si aggiorna ogni 30s.")
+c3.metric("P&L totale", f"${pnl_total:+,.2f}",
+          help="Valore ora − capitale iniziale. È la somma delle due colonne a destra.")
+c4.metric("→ di cui realizzato", f"${pnl_realized:+,.2f}",
+          help="Risultato dei trade GIÀ CHIUSI (cassa − capitale iniziale). Questi soldi sono definitivi.")
+c5.metric("→ di cui sulla carta", f"${unrealized:+,.2f}",
+          help="P&L delle posizioni ancora aperte. Diventa realizzato solo alla chiusura (stop/target).")
 
 st.divider()
 
+# ============================================================================
+# SEZIONE 2 — QUANTO È INVESTITO ADESSO
+# ============================================================================
+st.markdown("### 📦 Quanto è investito adesso")
+st.caption(
+    "**Margine impegnato** = soldi tuoi bloccati a garanzia delle posizioni. "
+    "**Esposizione** = dimensione vera delle scommesse (margine × leva). "
+    "**Bilancia long/short** = da che parte pende il portafoglio."
+)
+d1, d2, d3, d4, d5 = st.columns(5)
+d1.metric("Margine impegnato", f"${deployed_margin:,.0f}",
+          f"{deployed_margin / equity_now * 100:.0f}% del conto" if equity_now else "—",
+          help="Somma dei margini isolati delle posizioni aperte.")
+d2.metric("Disponibile", f"${available:,.0f}",
+          help="Liquidità non impegnata, pronta per nuove posizioni.")
+d3.metric("Esposizione totale", f"${total_exposure:,.0f}",
+          f"leva media {avg_leverage:.1f}x",
+          help="Valore di mercato controllato = margine × leva, sommato su tutte le posizioni.")
+d4.metric("Long vs Short", f"{n_long}L / {n_short}S",
+          f"${long_exp:,.0f} vs ${short_exp:,.0f}",
+          help="Numero di posizioni e esposizione per lato.")
+bias_pct = (net_exp / total_exposure * 100) if total_exposure else 0.0
+d5.metric("Esposizione netta", f"${net_exp:+,.0f}",
+          f"{bias_pct:+.0f}% {'long' if net_exp >= 0 else 'short'} bias",
+          help="Long − short: quanto il portafoglio guadagna/perde se TUTTO il mercato si muove insieme. Vicino a zero = market-neutral.")
+
+st.divider()
 
 # ============================================================================
-# Operator notes — manual context the operator surfaces to Claude.
+# SEZIONE 3 — PORTAFOGLIO (posizioni arricchite)
 # ============================================================================
-st.markdown("### Note operatore (input manuale per Claude)")
+st.markdown(f"### 📊 Portafoglio — {len(positions)} posizioni "
+            f"(mandato: min {CFG.MIN_OPEN_POSITIONS} · target {CFG.TARGET_OPEN_POSITIONS})")
+st.caption(
+    "**Cuscino SL** = quanto ROE può ancora perdere prima dello stop. **Manca al TP** = quanto ROE manca al target. "
+    "**Protetta** = coppia stop-loss + take-profit depositata sull'exchange (scatta anche a bot spento)."
+)
+
+opens_df = journal_data["opens"]
+opens_map = {}
+if not opens_df.empty:
+    for _, r in opens_df.iterrows():
+        opens_map[r["symbol"]] = (r["opened_ts"], r.get("trigger"))
+
+if positions:
+    now_utc = pd.Timestamp.now(tz="UTC")
+    rows = []
+    for p in positions:
+        sl_pct, tp_pct = journal.get_position_targets(p["symbol"])
+        roe = p["unrealized_pnl_pct"]
+        prot = protection.get(p["symbol"], {})
+        protected = "STOP_MARKET" in prot and "TAKE_PROFIT_MARKET" in prot
+        opened_ts, trig = opens_map.get(p["symbol"], (None, None))
+        age_h = ((now_utc - opened_ts).total_seconds() / 3600) if opened_ts is not None else None
+        trig_label = ""
+        if isinstance(trig, str) and trig:
+            trig_label = "⏰ ciclo" if trig == "baseline" else f"⚡ {trig.replace('event:', '')}"
+        rows.append({
+            "Crypto": p["symbol"].replace("USDT", ""),
+            "Direzione": "🟢 Long" if p["side"] == "LONG" else "🔴 Short",
+            "Leva": f"{p['leverage']}x",
+            "Margine": p["isolated_margin"],
+            "% del book": (p["isolated_margin"] / deployed_margin) if deployed_margin else 0.0,
+            "Esposizione": p["qty"] * p["mark_price"],
+            "Apertura": p["entry_price"],
+            "Ora": p["mark_price"],
+            "P&L $": p["unrealized_pnl"],
+            "ROE %": roe,
+            "SL": sl_pct,
+            "TP": tp_pct,
+            "Cuscino SL": roe - sl_pct,
+            "Manca al TP": tp_pct - roe,
+            "Protetta": "✅" if protected else "⚠️ engine",
+            "Età (h)": age_h,
+            "Aperta da": trig_label,
+            "Grafico": f"https://www.binance.com/en/futures/{p['symbol']}",
+        })
+    rows.sort(key=lambda r: -abs(r["P&L $"]))
+    st.dataframe(
+        pd.DataFrame(rows), width='stretch', hide_index=True,
+        column_config={
+            "Margine": st.column_config.NumberColumn(format="$%.0f", help="Soldi tuoi in pegno su questa posizione."),
+            "% del book": st.column_config.NumberColumn(format="percent", help="Peso della posizione sul margine totale impegnato."),
+            "Esposizione": st.column_config.NumberColumn(format="$%.0f", help="Margine × leva."),
+            "Apertura": st.column_config.NumberColumn(format="$%.4f"),
+            "Ora": st.column_config.NumberColumn(format="$%.4f"),
+            "P&L $": st.column_config.NumberColumn(format="$%+.2f"),
+            "ROE %": st.column_config.NumberColumn(format="percent", help="P&L in % del margine (return on equity della posizione)."),
+            "SL": st.column_config.NumberColumn(format="percent", help="Stop-loss (ROE) deciso da Claude — ordine reale sull'exchange."),
+            "TP": st.column_config.NumberColumn(format="percent", help="Take-profit (ROE) deciso da Claude — ordine reale sull'exchange."),
+            "Cuscino SL": st.column_config.NumberColumn(format="percent", help="ROE attuale − SL: quanto può ancora scendere prima dello stop. Piccolo = vicina allo stop."),
+            "Manca al TP": st.column_config.NumberColumn(format="percent", help="TP − ROE attuale: quanto manca al target."),
+            "Protetta": st.column_config.TextColumn(help="✅ = SL+TP depositati sull'exchange. ⚠️ = protezione solo dal risk engine locale."),
+            "Età (h)": st.column_config.NumberColumn(format="%.1f", help="Ore dall'apertura."),
+            "Aperta da": st.column_config.TextColumn(help="Cosa ha svegliato Claude: ⏰ ciclo periodico o ⚡ evento (segnale/stop scattato)."),
+            "Grafico": st.column_config.LinkColumn(display_text="📈"),
+        },
+    )
+    n_protected = sum(1 for r in rows if r["Protetta"] == "✅")
+    if n_protected == len(rows):
+        st.success(f"🛡️ Tutte le {len(rows)} posizioni hanno stop-loss e take-profit reali depositati sull'exchange.")
+    else:
+        st.warning(f"🛡️ {n_protected}/{len(rows)} posizioni con ordini exchange — le altre sono protette dal risk engine locale (fallback).")
+else:
+    st.info("Nessuna posizione aperta — il mandato sempre-investito le riaprirà al prossimo ciclo.")
+
+st.divider()
+
+# ============================================================================
+# SEZIONE 4 — LA TESTA DI CLAUDE (esperienza, auto-correzione, decisioni)
+# ============================================================================
+st.markdown("### 🧠 La testa di Claude")
+
+# --- 4a. Track record (la stessa fotografia che Claude legge di sé stesso) ---
+st.markdown("**Il suo track record (ultimi 7 giorni)** — questi numeri vengono iniettati nel prompt: Claude li legge e adatta la strategia.")
+if not realized_df.empty:
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=7)
+    week = realized_df[realized_df["ts"] >= cutoff]
+    if not week.empty:
+        wins = week[week["pnl"] > 0]
+        losses = week[week["pnl"] < 0]
+        n = len(week)
+        wr = len(wins) / n * 100 if n else 0.0
+        profit_factor = (wins["pnl"].sum() / abs(losses["pnl"].sum())) if len(losses) and losses["pnl"].sum() != 0 else float("inf")
+        last10 = week.tail(10)
+        wr10 = (last10["pnl"] > 0).mean() * 100 if len(last10) else 0.0
+        e1, e2, e3, e4, e5, e6 = st.columns(6)
+        e1.metric("Trade chiusi (7g)", f"{n}")
+        e2.metric("Win-rate", f"{wr:.0f}%",
+                  help="Percentuale di trade chiusi in profitto. Sotto 45% la guidance impone di ridurre il rischio.")
+        e3.metric("Win-rate ultimi 10", f"{wr10:.0f}%",
+                  help="Trend recente: sta migliorando o peggiorando?")
+        e4.metric("Netto realizzato 7g", f"${week['pnl'].sum():+,.2f}")
+        e5.metric("Media win / loss", f"+{wins['pnl'].mean():.0f} / {losses['pnl'].mean():.0f}" if len(wins) and len(losses) else "—",
+                  help="Vincita media vs perdita media in $. Vincite più grandi delle perdite compensano un win-rate basso.")
+        pf_str = "∞" if profit_factor == float("inf") else f"{profit_factor:.2f}"
+        e6.metric("Profit factor", pf_str,
+                  help="Somma vincite ÷ somma perdite. Sopra 1.0 = strategia in utile.")
+    else:
+        st.info("Nessun trade chiuso negli ultimi 7 giorni.")
+else:
+    st.info("Storico P&L non disponibile (conto appena resettato o API non raggiungibile).")
+
+perf_text = load_perf_review_text()
+if perf_text:
+    with st.expander("📋 Il blocco di auto-correzione esattamente come lo legge Claude"):
+        st.code(perf_text, language=None)
+
+# --- 4b. Ultima vista macro + decisioni per crypto ---
+dec = journal_data["decisions"]
+if not dec.empty:
+    latest = dec.iloc[0]
+    st.markdown("**L'ultima lettura del mercato** (market view del ciclo più recente):")
+    st.markdown(
+        f"<div style='border-left:3px solid #7c4dff;padding:8px 14px;margin:4px 0 14px 0;"
+        f"background:#f7f5ff;border-radius:4px'>"
+        f"<span style='font-size:0.8rem;color:#86868b'>{latest['ts']:%d/%m %H:%M} UTC · "
+        f"{'⏰ ciclo periodico' if latest['trigger'] == 'baseline' else '⚡ ' + str(latest['trigger'])}</span><br/>"
+        f"{latest['market_view']}</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("**Le decisioni, crypto per crypto** — azione, stop, leva e il ragionamento completo:")
+    action_emoji = {"long": "🟢", "short": "🔻", "flat": "⚪", "close": "🚪"}
+    action_label = {"long": "Apri LONG", "short": "Apri SHORT", "flat": "Nessuna azione", "close": "Chiudi posizione"}
+    for _, row in dec.iterrows():
+        try:
+            items = json.loads(row["decisions_json"])
+        except Exception:
+            items = []
+        n_long_d = sum(1 for d in items if d.get("action") == "long")
+        n_short_d = sum(1 for d in items if d.get("action") == "short")
+        n_close_d = sum(1 for d in items if d.get("action") == "close")
+        trig = row["trigger"]
+        trig_label = "" if pd.isna(trig) or not trig else (
+            " · ⏰ ciclo" if trig == "baseline" else f" · ⚡ {trig}"
+        )
+        header = (
+            f"{row['ts']:%d/%m %H:%M UTC} · {len(items)} valutate · "
+            f"🟢 {n_long_d} long · 🔻 {n_short_d} short · 🚪 {n_close_d} chiusure{trig_label}"
+        )
+        with st.expander(header):
+            st.markdown(f"**Vista macro:** {row['market_view']}")
+            st.markdown("---")
+            for d in items:
+                symbol = d.get("symbol", "")
+                action = d.get("action", "")
+                conf = float(d.get("confidence", 0))
+                reasoning = d.get("reasoning", "")
+                clean_sym = symbol.replace("USDT", "")
+                emoji = action_emoji.get(action, "•")
+                label = action_label.get(action, action)
+                params = ""
+                if action in ("long", "short") and d.get("stop_loss_pct") is not None:
+                    params = (f" · leva **{d.get('leverage')}x** · "
+                              f"SL **{d.get('stop_loss_pct', 0):+.0%}** · "
+                              f"TP **{d.get('take_profit_pct', 0):+.0%}**")
+                chart_main = f"https://www.binance.com/en/futures/{symbol}"
+                tv_link = f"https://www.tradingview.com/symbols/{symbol}.P/?exchange=BINANCE"
+                st.markdown(
+                    f"**{emoji} {clean_sym}** — {label} · fiducia **{conf:.0%}**{params}  \n"
+                    f"<span style='color:#3a3a3c'>{reasoning}</span>  \n"
+                    f"<span style='font-size:0.85rem'>"
+                    f"📈 <a href='{chart_main}' target='_blank'>Binance</a> · "
+                    f"<a href='{tv_link}' target='_blank'>TradingView</a></span>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown("")
+else:
+    st.info("Nessuna decisione registrata ancora.")
+
+st.divider()
+
+# ============================================================================
+# SEZIONE 5 — ANDAMENTO
+# ============================================================================
+st.markdown("### 📈 Andamento")
+g1, g2 = st.columns(2)
+
+with g1:
+    st.markdown("**Equity nel tempo** (% dal capitale iniziale, un punto per ciclo)")
+    if not eq_df.empty:
+        eq_live = eq_df[eq_df["source"] == "live"]
+        if not eq_live.empty:
+            eq_live = eq_live.set_index("ts")
+            pct_change = ((eq_live[["total_equity"]] / initial_capital) - 1) * 100
+            pct_change = pct_change.rename(columns={"total_equity": "Equity %"})
+            st.line_chart(pct_change, height=300)
+        else:
+            st.info("Nessun dato equity ancora.")
+    else:
+        st.info("Nessun dato equity ancora.")
+
+with g2:
+    st.markdown("**P&L realizzato cumulato** ($, trade chiusi — solo soldi veri)")
+    if not realized_df.empty:
+        cum = realized_df.set_index("ts")[["pnl"]].cumsum()
+        cum = cum.rename(columns={"pnl": "Realizzato cumulato $"})
+        st.line_chart(cum, height=300)
+    else:
+        st.info("Nessun trade chiuso ancora.")
+
+st.divider()
+
+# ============================================================================
+# SEZIONE 6 — OPERAZIONI RECENTI (con esito)
+# ============================================================================
+st.markdown("### 🧾 Operazioni recenti")
+st.caption("🎯/🛑 = chiusa dall'ordine exchange (take-profit/stop-loss). Il ROE nella nota è il risultato % sul margine al momento della chiusura.")
+tr = journal_data["trades"]
+if tr.empty:
+    st.info("Nessuna operazione ancora.")
+else:
+    kind_map = {
+        "open": "🟢 Apertura",
+        "martingale_add": "➕ Martingale",
+        "tp": "🎯 Take Profit",
+        "sl": "🛑 Stop Loss",
+        "liq_guard": "⛔ Pre-liquidazione",
+        "manual_close": "🚪 Chiusura decisa da Claude",
+        "server_exit_cleanup": "🧹 Pulizia ordini",
+    }
+    tr_display = tr.copy()
+    tr_display["Tipo"] = tr_display["kind"].map(kind_map).fillna(tr_display["kind"])
+    tr_display["Crypto"] = tr_display["symbol"].str.replace("USDT", "")
+    tr_display["Direzione"] = tr_display["side"].map({"LONG": "🟢 Long", "SHORT": "🔴 Short"}).fillna(tr_display["side"])
+    trig_col = tr_display["trigger"].fillna("")
+    tr_display["Da"] = trig_col.map(lambda t: "" if not t else ("⏰ ciclo" if t == "baseline" else f"⚡ {str(t).replace('event:', '').replace('risk:', '')}"))
+    tr_display = tr_display[["ts", "Crypto", "Direzione", "Tipo", "Da", "qty", "price", "notional_usdt", "note"]]
+    tr_display.columns = ["Quando", "Crypto", "Direzione", "Tipo", "Da", "Quantità", "Prezzo", "Valore", "Nota"]
+    st.dataframe(
+        tr_display, width='stretch', hide_index=True,
+        column_config={
+            "Quantità": st.column_config.NumberColumn(format="%.4f"),
+            "Prezzo": st.column_config.NumberColumn(format="$%.4f"),
+            "Valore": st.column_config.NumberColumn(format="$%.2f"),
+            "Nota": st.column_config.TextColumn(help="Per le chiusure: ROE al momento dell'uscita."),
+        },
+    )
+
+st.divider()
+
+# ============================================================================
+# SEZIONE 7 — COSTI DEL CERVELLO (chiamate Claude)
+# ============================================================================
+st.markdown("### 💸 Costi del cervello")
+st.caption(
+    "Ogni decisione è una chiamata all'API Anthropic. Stima calcolata dai token registrati "
+    f"(prezzi {CFG.CLAUDE_MODEL}: ${_MODEL_PRICES.get(CFG.CLAUDE_MODEL, (5, 25))[0]}/M input, "
+    f"${_MODEL_PRICES.get(CFG.CLAUDE_MODEL, (5, 25))[1]}/M output) + piccolo forfait cache. Approssimata per difetto."
+)
+calls = journal_data["calls"]
+if not calls.empty:
+    calls = calls.copy()
+
+    def _row_cost(r):
+        p_in, p_out = _MODEL_PRICES.get(str(r.get("model") or ""), (5.00, 25.00))
+        return ((r.get("input_tokens") or 0) * p_in + (r.get("output_tokens") or 0) * p_out) / 1e6 + _CACHE_ADDER_PER_CALL
+
+    calls["cost"] = calls.apply(_row_cost, axis=1)
+    calls["day"] = calls["ts"].dt.date
+    today = datetime.now(timezone.utc).date()
+    today_calls = calls[calls["day"] == today]
+    f1, f2, f3, f4 = st.columns(4)
+    f1.metric("Chiamate oggi", f"{len(today_calls)}",
+              help="Cicli periodici + chiamate a evento (cap 4/ora).")
+    f2.metric("Costo stimato oggi", f"${today_calls['cost'].sum():.2f}")
+    f3.metric("Costo totale registrato", f"${calls['cost'].sum():.2f}",
+              f"{len(calls)} chiamate totali")
+    f4.metric("Costo medio/chiamata", f"${calls['cost'].mean():.3f}",
+              help="La cache del prompt tiene basso il costo: le regole di strategia si pagano una volta e si riusano per un'ora.")
+    daily = calls.groupby("day").agg(costo=("cost", "sum")).tail(14)
+    daily.index = pd.to_datetime(daily.index)
+    st.bar_chart(daily, height=200)
+else:
+    st.info("Nessuna chiamata registrata ancora.")
+
+st.divider()
+
+# ============================================================================
+# Operator notes
+# ============================================================================
+st.markdown("### 📝 Note operatore (input manuale per Claude)")
 st.caption(
     "Tutto quello che inserisci qui viene letto da Claude al prossimo ciclo come contesto ad ALTA priorità. "
-    "Usalo per news non in CryptoPanic, eventi macro, rumor, catalizzatori specifici."
+    "Usalo per news, eventi macro, rumor, catalizzatori specifici."
 )
-
 note_col1, note_col2 = st.columns([3, 1])
 with note_col1:
     new_note_text = st.text_area(
         "Nuova nota",
-        placeholder="es: 'Powell parla mercoledì 14:00 ET, attesi toni hawkish' o 'rumor su SOL hack, attendere conferme'",
-        key="new_note_text",
-        height=80,
+        placeholder="es: 'Powell parla mercoledì 14:00 ET, attesi toni hawkish'",
+        key="new_note_text", height=80,
     )
 with note_col2:
-    note_symbol = st.text_input(
-        "Simbolo (opzionale)",
-        placeholder="es: BTCUSDT — vuoto = nota globale",
-        key="new_note_symbol",
-    ).strip().upper()
-    note_hours = st.number_input(
-        "Scade in (ore)",
-        min_value=1, max_value=720, value=48, step=1,
-        help="Dopo N ore la nota viene ignorata automaticamente.",
-        key="new_note_hours",
-    )
+    note_symbol = st.text_input("Simbolo (opzionale)", placeholder="es: BTCUSDT — vuoto = globale",
+                                key="new_note_symbol").strip().upper()
+    note_hours = st.number_input("Scade in (ore)", min_value=1, max_value=720, value=48, step=1,
+                                 key="new_note_hours")
     if st.button("Aggiungi nota", type="primary", width='stretch'):
         if new_note_text.strip():
-            journal.add_operator_note(
-                new_note_text.strip(),
-                symbol=(note_symbol or None),
-                expires_hours=float(note_hours),
-            )
+            journal.add_operator_note(new_note_text.strip(), symbol=(note_symbol or None),
+                                      expires_hours=float(note_hours))
             st.success("Nota salvata. Verrà passata a Claude al prossimo ciclo.")
             st.rerun()
         else:
@@ -296,197 +615,25 @@ if active_notes:
     for n in active_notes:
         target = n.get("symbol") or "Globale"
         expires = n.get("expires_at")
-        expires_str = f" · scade {expires[:16]}" if expires else " · nessuna scadenza"
+        expires_str = f" · scade {expires[:16]}" if expires else ""
         cols = st.columns([6, 1])
         cols[0].markdown(
             f"<div style='border-left:3px solid #0066ff;padding:6px 12px;margin:6px 0;"
             f"background:#f5f5f7;border-radius:4px'>"
             f"<span style='font-size:0.8rem;color:#86868b'>{n['ts'][:16]} · {target}{expires_str}</span><br/>"
-            f"{n['note']}"
-            f"</div>",
+            f"{n['note']}</div>",
             unsafe_allow_html=True,
         )
         if cols[1].button("Disattiva", key=f"deactivate_{n['id']}"):
             journal.deactivate_operator_note(n["id"])
             st.rerun()
-else:
-    st.info("Nessuna nota attiva. Aggiungine una sopra per dare contesto a Claude.")
 
 st.divider()
 
-
 # ============================================================================
-# GRANULAR — aggressive only now
+# Salute sistema + glossario
 # ============================================================================
-st.markdown("### Dettaglio posizioni live")
-
-
-# --- AGGRESSIVE — live testnet positions (Claude-driven) ---
-if positions:
-    rows = []
-    for p in positions:
-        price_change_pct = (p["mark_price"] - p["entry_price"]) / p["entry_price"]
-        sl_pct, tp_pct = journal.get_position_targets(p["symbol"])
-        rows.append({
-            "Crypto": p["symbol"].replace("USDT", ""),
-            "Direzione": "🟢 Long" if p["side"] == "LONG" else "🔴 Short",
-            "Grafico": f"https://www.binance.com/en/futures/{p['symbol']}",
-            "Leva": f"{p['leverage']}x",
-            "Quantità": p["qty"],
-            "Prezzo apertura": p["entry_price"],
-            "Prezzo ora": p["mark_price"],
-            "Variazione prezzo": price_change_pct,
-            "Margine": p["isolated_margin"],
-            "Esposizione": p["qty"] * p["mark_price"],
-            "P&L $": p["unrealized_pnl"],
-            "P&L %": p["unrealized_pnl_pct"],
-            "SL": sl_pct,
-            "TP": tp_pct,
-            "Martingale": p["martingale_levels"],
-        })
-    st.dataframe(
-        pd.DataFrame(rows), width='stretch', hide_index=True,
-        column_config={
-            "Grafico": st.column_config.LinkColumn(display_text="📈 Apri", help="Apre il grafico su Binance Futures."),
-            "Direzione": st.column_config.TextColumn(help="Long = guadagna se il prezzo sale. Short = guadagna se scende."),
-            "Leva": st.column_config.TextColumn(help="Leva scelta da Claude per questa posizione."),
-            "Quantità": st.column_config.NumberColumn(format="%.4f"),
-            "Prezzo apertura": st.column_config.NumberColumn(format="$%.4f"),
-            "Prezzo ora": st.column_config.NumberColumn(format="$%.4f"),
-            "Variazione prezzo": st.column_config.NumberColumn(format="percent", help="Variazione del prezzo dall'apertura. Per uno short il P&L sale quando questa scende."),
-            "Margine": st.column_config.NumberColumn(format="$%.2f", help="Soldi tuoi in pegno."),
-            "Esposizione": st.column_config.NumberColumn(format="$%.2f", help="Margine × leva della posizione."),
-            "P&L $": st.column_config.NumberColumn(format="$%+,.2f"),
-            "P&L %": st.column_config.NumberColumn(format="percent",
-                                                   help="Confronta con SL e TP ragionati da Claude (colonne accanto)."),
-            "SL": st.column_config.NumberColumn(format="percent",
-                                                 help="Stop loss specifico per questa posizione, deciso da Claude."),
-            "TP": st.column_config.NumberColumn(format="percent",
-                                                 help="Take profit specifico per questa posizione, deciso da Claude."),
-            "Martingale": st.column_config.NumberColumn(help="Livelli usati su 3."),
-        },
-    )
-else:
-    st.info("Nessuna posizione aperta. Claude sta valutando i candidati al prossimo ciclo.")
-
-st.divider()
-
-
-# ============================================================================
-# Equity curves chart
-# ============================================================================
-st.markdown("### Andamento nel tempo")
-st.caption(f"Equity curve della strategia (${agg_alloc:,.0f} di partenza), campionata a ogni ciclo del bot. Il valore in cima alla pagina è invece live (aggiornato ogni 30s).")
-
-if not eq_df.empty:
-    eq_live = eq_df[eq_df["source"] == "live"]
-    if eq_live.empty:
-        pct_change = pd.DataFrame()
-    else:
-        eq_live = eq_live.set_index("ts")
-        first = float(eq_live.iloc[0]["total_equity"])
-        pct_change = ((eq_live[["total_equity"]] / first) - 1) * 100
-        pct_change = pct_change.rename(columns={"total_equity": "Aggressive"})
-    st.line_chart(pct_change, width='stretch', height=380)
-else:
-    st.info("Nessun dato di equity ancora — aspetta il primo ciclo.")
-
-st.divider()
-
-
-# ============================================================================
-# Decisions + trades (compact)
-# ============================================================================
-col_left, col_right = st.columns([1, 1])
-
-with col_left:
-    st.markdown("### Decisioni di Claude — dettaglio per crypto")
-    st.caption("Una card per ogni crypto valutata: azione, confidence, motivazione completa, link al grafico.")
-    dec = journal_data["decisions"]
-    if dec.empty:
-        st.info("Nessuna decisione ancora.")
-    else:
-        action_emoji = {"long": "🟢", "short": "🔻", "flat": "⚪", "close": "🚪"}
-        action_label = {"long": "Apri LONG", "short": "Apri SHORT", "flat": "Sta fuori", "close": "Chiudi posizione"}
-        for _, row in dec.iterrows():
-            try:
-                items = json.loads(row["decisions_json"])
-            except Exception:
-                items = []
-            n_long = sum(1 for d in items if d.get("action") == "long")
-            n_short = sum(1 for d in items if d.get("action") == "short")
-            n_close = sum(1 for d in items if d.get("action") == "close")
-            trig = row.get("trigger") if hasattr(row, "get") else row["trigger"]
-            trig_label = "" if pd.isna(trig) or not trig else (
-                " · ⏰ ciclo" if trig == "baseline" else f" · ⚡ {trig}"
-            )
-            header = (
-                f"{row['ts']:%d/%m %H:%M UTC} · {len(items)} crypto · "
-                f"🟢 {n_long} long · 🔻 {n_short} short · 🚪 {n_close} close{trig_label}"
-            )
-            with st.expander(header):
-                st.markdown(f"**Vista macro:** {row['market_view']}")
-                st.markdown("---")
-                for d in items:
-                    symbol = d.get("symbol", "")
-                    action = d.get("action", "")
-                    conf = float(d.get("confidence", 0))
-                    reasoning = d.get("reasoning", "")
-                    clean_sym = symbol.replace("USDT", "")
-                    chart_main = f"https://www.binance.com/en/futures/{symbol}"
-                    chart_test = f"https://testnet.binancefuture.com/en/futures/{symbol}"
-                    tv_link = f"https://www.tradingview.com/symbols/{symbol}.P/?exchange=BINANCE"
-                    emoji = action_emoji.get(action, "•")
-                    label = action_label.get(action, action)
-                    st.markdown(
-                        f"**{emoji} {clean_sym}** — {label} · sicurezza **{conf:.0%}**  \n"
-                        f"<span style='color:#3a3a3c'>{reasoning}</span>  \n"
-                        f"<span style='font-size:0.85rem'>"
-                        f"📈 <a href='{chart_main}' target='_blank'>Binance</a> · "
-                        f"<a href='{chart_test}' target='_blank'>Testnet</a> · "
-                        f"<a href='{tv_link}' target='_blank'>TradingView</a>"
-                        f"</span>",
-                        unsafe_allow_html=True,
-                    )
-                    st.markdown("")
-
-with col_right:
-    st.markdown("### Operazioni recenti")
-    st.caption("Strategia Aggressive — ordini eseguiti sul testnet.")
-    tr = journal_data["trades"]
-    if tr.empty:
-        st.info("Nessuna operazione ancora.")
-    else:
-        kind_map = {
-            "open": "🟢 Apertura",
-            "martingale_add": "➕ Martingale",
-            "tp": "🎯 Take Profit",
-            "sl": "🛑 Stop Loss",
-            "liq_guard": "⛔ Chiusura pre-liquidazione",
-            "manual_close": "🚪 Chiusura",
-        }
-        tr_display = tr.copy()
-        tr_display["Tipo"] = tr_display["kind"].map(kind_map).fillna(tr_display["kind"])
-        tr_display["Crypto"] = tr_display["symbol"].str.replace("USDT", "")
-        tr_display["Direzione"] = tr_display["side"].map({"LONG": "🟢 Long", "SHORT": "🔴 Short"}).fillna(tr_display["side"])
-        tr_display = tr_display[["ts", "Crypto", "Direzione", "Tipo", "qty", "price", "notional_usdt"]]
-        tr_display.columns = ["Quando", "Crypto", "Direzione", "Tipo", "Quantità", "Prezzo", "Valore"]
-        st.dataframe(
-            tr_display, width='stretch', hide_index=True,
-            column_config={
-                "Quantità": st.column_config.NumberColumn(format="%.4f"),
-                "Prezzo": st.column_config.NumberColumn(format="$%.4f"),
-                "Valore": st.column_config.NumberColumn(format="$%.2f"),
-            },
-        )
-
-st.divider()
-
-
-# ============================================================================
-# System health — stream/risk-engine events worth the operator's attention
-# ============================================================================
-with st.expander("Salute sistema — eventi stream / risk engine"):
+with st.expander("🩺 Salute sistema — eventi stream / risk engine"):
     sys_ev = journal_data.get("system_events")
     if sys_ev is None or sys_ev.empty:
         st.info("Nessun evento di sistema recente. Tutto regolare.")
@@ -496,6 +643,7 @@ with st.expander("Salute sistema — eventi stream / risk engine"):
             "KILL_SOFT": "⏸️ Pausa (soft kill)", "RESUME": "▶️ Ripresa",
             "TRIGGER_DROPPED": "🔇 Trigger scartati", "RISK_BACKSTOP": "🚨 Backstop ciclo",
             "ERROR": "❌ Errore", "NOTIONAL_CAP": "🧢 Cap esposizione", "WARN": "⚠️ Warning",
+            "SERVER_EXIT_CLEANUP": "🧹 Pulizia ordini",
         }
         ev_display = sys_ev.copy()
         ev_display["Tipo"] = ev_display["level"].map(level_map).fillna(ev_display["level"])
@@ -503,49 +651,45 @@ with st.expander("Salute sistema — eventi stream / risk engine"):
         ev_display.columns = ["Quando", "Tipo", "Dettaglio"]
         st.dataframe(ev_display, width='stretch', hide_index=True)
 
-st.divider()
-
-
-# ============================================================================
-# Glossary
-# ============================================================================
-with st.expander("Glossario — significato di ogni termine"):
+with st.expander("📖 Glossario — significato di ogni termine"):
     st.markdown(
         """
-**Patrimonio totale (Equity)** — Quanto vale il tuo conto in questo momento se chiudessi tutte le posizioni ai prezzi attuali. La cifra finale che conta.
+**Capitale iniziale** — Il saldo reale del conto al reset del 15/07/2026 ($3.912,89). Tutti i P&L sono misurati da questa baseline.
 
-**Profitto/Perdita non realizzato** — Il guadagno o la perdita "sulla carta" delle posizioni ancora aperte. Diventa reale solo quando chiudi.
+**Equity (Valore conto)** — Quanto vale il conto adesso: cassa + P&L sulla carta delle posizioni aperte.
 
-**Margine** — I soldi tuoi "in pegno" per tenere aperta una posizione con la leva. Con leva 10x, $100 di margine controllano $1.000 di crypto.
+**P&L realizzato** — Il risultato dei trade già chiusi. Soldi veri, definitivi.
 
-**Esposizione (Notional)** — Margine × leva. La dimensione vera della scommessa.
+**P&L sulla carta (non realizzato)** — Il guadagno/perdita delle posizioni ancora aperte ai prezzi attuali. Cambia di continuo; diventa realizzato alla chiusura.
 
-**Leva (Leverage)** — Moltiplicatore. 10x significa che con $1 muovi $10. Amplifica guadagni e perdite di 10×.
+**Margine** — I soldi tuoi "in pegno" per tenere aperta una posizione con leva. Con leva 10x, $100 di margine controllano $1.000 di crypto.
 
-**LONG / SHORT** — LONG: scommetti che il prezzo salga (compri). SHORT: scommetti che scenda (vendi allo scoperto). Il bot opera in entrambe le direzioni: la scelta la fa Claude in base a trend e flow.
+**Esposizione (Notional)** — Margine × leva: la dimensione vera della scommessa.
 
-**Stop Loss (SL)** — Soglia di perdita (sul margine) oltre la quale la posizione viene chiusa. Decisa da Claude per ogni trade e applicata in tempo reale dal risk engine (WebSocket, reazione <1s).
+**Esposizione netta** — Long − short. Vicino a zero = market-neutral: il portafoglio non dipende dalla direzione generale del mercato ma dalle scelte relative (i long battono gli short).
 
-**Take Profit (TP)** — Soglia di guadagno (sul margine) alla quale la posizione viene chiusa. Anche questa per-trade e in tempo reale.
+**ROE** — Return on equity della posizione: P&L in % del margine. A leva 10x, un movimento di prezzo dell'1% = ROE del 10%.
 
-**Guardia pre-liquidazione (Liq-guard)** — Se il prezzo percorre il 75% della strada verso la liquidazione, il risk engine chiude d'ufficio, qualunque sia lo stop impostato.
+**Stop Loss (SL) / Take Profit (TP)** — Soglie di uscita in ROE decise da Claude per ogni trade e depositate come ORDINI REALI sull'exchange: scattano anche se il bot fosse spento.
 
-**Martingale** — Quando una posizione perde -15% sul margine, il bot media aggiungendo il 50% del margine. Max 2 volte, minimo 30 minuti tra le aggiunte, e SOLO su posizioni con leva ≤10x. A 15x/20x non si media mai.
+**Cuscino SL / Manca al TP** — Distanza (in ROE) dall'uscita in perdita / dal target di profitto.
 
-**HODL** — Compra e tieni, senza mai vendere.
+**Guardia pre-liquidazione** — Se il prezzo percorre il 75% della strada verso la liquidazione, il risk engine locale chiude d'ufficio.
 
-**DCA (Dollar Cost Averaging)** — Comprare un po' alla volta a intervalli regolari (qui: settimanale per 8 settimane), per mediare il prezzo.
+**Portafoglio sempre investito** — Mandato: minimo 10 posizioni aperte, target 12. La prudenza si esprime con leva più bassa e stop più larghi, mai stando fuori dal mercato.
 
-**Blue-chip** — Le 5 crypto più grandi e stabili: BTC, ETH, SOL, BNB, XRP.
+**Auto-correzione** — Prima di ogni ciclo Claude legge il proprio track record reale (win-rate, P&L) e una guidance calcolata: con risultati scarsi riduce leva e bilancia il book, con buoni risultati mantiene la disciplina.
 
-**Live vs Paper** — Live: posizioni vere sul testnet, confermate dal broker. Paper: simulate sui prezzi reali. Per crypto liquide il risultato è praticamente identico.
+**Trigger (⏰/⚡)** — Cosa ha attivato la decisione: il ciclo periodico (4h) o un evento (segnale tecnico, stop scattato, movimento improvviso).
 
-**Testnet** — Ambiente di test della borsa Binance, soldi finti. Tutto qui è simulato, ma i prezzi sono reali.
+**Profit factor** — Somma delle vincite ÷ somma delle perdite. Sopra 1.0 la strategia è in utile.
+
+**Testnet** — Ambiente di test Binance, soldi finti, prezzi reali.
         """
     )
 
 st.caption(
-    f"Auto-refresh ogni {REFRESH_SECONDS}s · Baseline ogni {CFG.BASELINE_INTERVAL_SECONDS // 60} min "
-    f"+ cicli a evento (max {CFG.EVENT_MAX_CALLS_PER_HOUR}/h) · "
-    f"DB: {CFG.JOURNAL_DB.name}"
+    f"Auto-refresh {REFRESH_SECONDS}s · Ciclo completo ogni {CFG.BASELINE_INTERVAL_SECONDS // 3600}h "
+    f"+ chiamate a evento (max {CFG.EVENT_MAX_CALLS_PER_HOUR}/h) · "
+    f"Modello {CFG.CLAUDE_MODEL} · DB: {CFG.JOURNAL_DB.name}"
 )
