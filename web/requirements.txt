@@ -1,0 +1,3 @@
+# The Vercel serverless function (api/state.py) uses only the Python standard
+# library (urllib, hmac, hashlib) — no third-party packages, for fast cold
+# starts. This file is intentionally empty; it just signals the Python runtime.

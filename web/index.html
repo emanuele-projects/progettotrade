@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading Bot — Dashboard</title>
+<style>
+  :root{
+    --bg:#f6f6f8; --card:#ffffff; --ink:#1d1d1f; --muted:#6b6b76; --line:#e5e5ea;
+    --green:#0f9d58; --red:#d93025; --accent:#7c4dff; --accentbg:#f2effd;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0f0f12; --card:#1a1a1f; --ink:#ececf1; --muted:#9a9aa5; --line:#2b2b33;
+           --green:#3ddc84; --red:#ff5b52; --accent:#b39dff; --accentbg:#221d3a; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       -webkit-font-smoothing:antialiased}
+  .wrap{max-width:1200px;margin:0 auto;padding:22px 18px 60px}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+  h1{font-size:1.5rem;font-weight:650;letter-spacing:-.02em;margin:0}
+  .sub{color:var(--muted);font-size:.82rem}
+  h2{font-size:1.02rem;font-weight:640;margin:26px 0 10px}
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(165px,1fr))}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:13px 15px}
+  .card .lab{font-size:.74rem;color:var(--muted);font-weight:500;display:flex;gap:5px;align-items:center}
+  .card .val{font-size:1.34rem;font-weight:660;margin-top:5px;letter-spacing:-.01em}
+  .card .hint{font-size:.74rem;color:var(--muted);margin-top:3px}
+  .pos{color:var(--green)} .neg{color:var(--red)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);
+        border-radius:12px;overflow:hidden;font-size:.86rem}
+  th,td{padding:9px 11px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{font-size:.72rem;color:var(--muted);font-weight:600;text-align:right;background:transparent}
+  th:first-child,td:first-child{text-align:left}
+  tr:last-child td{border-bottom:none}
+  .tag{display:inline-block;padding:1px 7px;border-radius:20px;font-size:.74rem;font-weight:600}
+  .tl{background:rgba(15,157,88,.14);color:var(--green)} .ts{background:rgba(217,48,37,.14);color:var(--red)}
+  .bar{height:6px;border-radius:4px;background:var(--line);overflow:hidden;margin-top:6px}
+  .bar > i{display:block;height:100%}
+  .note{background:var(--accentbg);border:1px solid var(--line);border-left:3px solid var(--accent);
+        border-radius:8px;padding:11px 14px;font-size:.84rem;color:var(--ink);margin:14px 0}
+  button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--ink);
+         border-radius:8px;padding:7px 14px}
+  button.primary{background:var(--accent);color:#fff;border-color:transparent;font-weight:600}
+  #login{max-width:340px;margin:12vh auto;text-align:center}
+  input{font:inherit;width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:9px;
+        background:var(--card);color:var(--ink);margin:10px 0}
+  canvas{width:100%;height:120px;display:block;margin-top:8px}
+  .err{color:var(--red);font-size:.85rem;margin-top:8px}
+  .dim{color:var(--muted)}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login">
+  <h1>🔒 Trading Bot</h1>
+  <p class="sub">Inserisci la password per vedere la dashboard.</p>
+  <input id="pw" type="password" placeholder="Password" autofocus>
+  <button class="primary" style="width:100%" onclick="login()">Accedi</button>
+  <div id="loginerr" class="err"></div>
+</div>
+
+<!-- DASHBOARD -->
+<div class="wrap" id="app" style="display:none">
+  <header>
+    <div>
+      <h1>Trading Bot</h1>
+      <div class="sub">Portafoglio testnet · vista live da Binance · <span id="updated" class="dim"></span></div>
+    </div>
+    <button onclick="logout()">Logout</button>
+  </header>
+
+  <div class="note">
+    Questa è la <b>vetrina finanziaria live</b>: soldi, posizioni e P&amp;L letti in diretta da Binance a ogni refresh.
+    Il bot vero (decisioni di Claude, WebSocket, ordini) gira 24/7 sulla VM Oracle — il ragionamento completo di Claude
+    è sulla dashboard Oracle (via tunnel SSH).
+  </div>
+
+  <h2>💰 I soldi</h2>
+  <div class="grid" id="money"></div>
+
+  <h2>📦 Quanto è investito adesso</h2>
+  <div class="grid" id="exposure"></div>
+
+  <h2 id="posTitle">📊 Portafoglio</h2>
+  <div style="overflow-x:auto"><table id="postable"></table></div>
+
+  <h2>🧠 Track record di Claude (ultimi 7 giorni)</h2>
+  <div class="sub" style="margin-bottom:10px">Gli stessi numeri che Claude legge di sé prima di decidere: se il win-rate è basso, riduce leva e bilancia il book.</div>
+  <div class="grid" id="track"></div>
+
+  <h2>📈 P&L realizzato cumulato</h2>
+  <div class="sub" style="margin-bottom:6px">Solo trade chiusi — soldi veri incassati/persi.</div>
+  <div class="card"><canvas id="curve"></canvas></div>
+
+  <div class="sub" style="margin-top:26px" id="footer"></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const eur = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString("it-IT",{minimumFractionDigits:2,maximumFractionDigits:2});
+const eur0 = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString("it-IT",{maximumFractionDigits:0});
+const pct = n => (n>=0?"+":"")+n.toFixed(1)+"%";
+const cls = n => n>=0?"pos":"neg";
+
+function login(){
+  const pw = $("#pw").value.trim();
+  if(!pw){ $("#loginerr").textContent="Scrivi la password."; return; }
+  sessionStorage.setItem("pw", pw);
+  $("#loginerr").textContent="Verifico…";
+  refresh(true);
+}
+function logout(){ sessionStorage.removeItem("pw"); location.reload(); }
+
+function card(lab, val, hint, klass){
+  return `<div class="card"><div class="lab">${lab}</div>
+    <div class="val ${klass||''}">${val}</div>${hint?`<div class="hint">${hint}</div>`:""}</div>`;
+}
+
+function render(d){
+  const m=d.money, e=d.exposure;
+  $("#money").innerHTML =
+    card("Capitale iniziale", eur(m.initial), "baseline dal reset 15/07") +
+    card("Valore conto ORA", eur(m.equity), pct(m.pnl_total_pct)+" dall'inizio", cls(m.pnl_total)) +
+    card("P&L totale", eur(m.pnl_total), "cassa + carta", cls(m.pnl_total)) +
+    card("↳ realizzato", eur(m.pnl_realized), "trade chiusi, soldi veri", cls(m.pnl_realized)) +
+    card("↳ sulla carta", eur(m.unrealized), "posizioni aperte", cls(m.unrealized));
+
+  const bias = e.total_exposure? (e.net_exp/e.total_exposure*100):0;
+  $("#exposure").innerHTML =
+    card("Margine impegnato", eur0(e.deployed_margin), e.deployed_pct.toFixed(0)+"% del conto") +
+    card("Disponibile", eur0(e.available), "liquidità libera") +
+    card("Esposizione totale", eur0(e.total_exposure), "leva media "+e.avg_leverage.toFixed(1)+"x") +
+    card("Long vs Short", e.n_long+"L / "+e.n_short+"S", eur0(e.long_exp)+" vs "+eur0(e.short_exp)) +
+    card("Esposizione netta", (e.net_exp>=0?"+":"")+eur0(e.net_exp), pct(bias).replace('%','%')+" "+(e.net_exp>=0?"long":"short")+" bias", cls(e.net_exp));
+
+  // positions
+  $("#posTitle").innerHTML = `📊 Portafoglio — ${d.positions.length} posizioni <span class="dim" style="font-size:.8rem;font-weight:400">(mandato min ${d.mandate.min} · target ${d.mandate.target})</span>`;
+  let rows = `<tr><th>Crypto</th><th>Dir.</th><th>Leva</th><th>Margine</th><th>% book</th>
+    <th>Apertura</th><th>Ora</th><th>P&L $</th><th>ROE</th></tr>`;
+  for(const p of d.positions){
+    const w = e.deployed_margin? (p.margin/e.deployed_margin*100):0;
+    rows += `<tr>
+      <td><b>${p.base}</b>${p.anchor?' <span class="dim">⚓</span>':''}</td>
+      <td><span class="tag ${p.side==='LONG'?'tl':'ts'}">${p.side==='LONG'?'Long':'Short'}</span></td>
+      <td>${p.leverage}x</td>
+      <td>${eur0(p.margin)}</td>
+      <td>${w.toFixed(0)}%</td>
+      <td class="dim">$${p.entry.toLocaleString("it-IT",{maximumFractionDigits:4})}</td>
+      <td>$${p.mark.toLocaleString("it-IT",{maximumFractionDigits:4})}</td>
+      <td class="${cls(p.upnl)}">${(p.upnl>=0?"+":"")+eur(p.upnl).replace('$','$')}</td>
+      <td class="${cls(p.roe)}">${pct(p.roe*100)}</td>
+    </tr>`;
+  }
+  if(!d.positions.length) rows += `<tr><td colspan="9" class="dim">Nessuna posizione — il mandato le riaprirà al prossimo ciclo.</td></tr>`;
+  $("#postable").innerHTML = rows;
+
+  // track record
+  const t=d.track;
+  const pf = t.profit_factor===null? "∞" : (t.profit_factor<0? "—" : t.profit_factor.toFixed(2));
+  const wrColor = t.win_rate>=45? "pos" : (t.win_rate>=30? "" : "neg");
+  $("#track").innerHTML =
+    card("Trade chiusi (7g)", t.n) +
+    card("Win-rate", t.win_rate.toFixed(0)+"%", "ultimi 10: "+t.win_rate_10.toFixed(0)+"%", wrColor) +
+    card("Netto realizzato 7g", eur(t.net), "", cls(t.net)) +
+    card("Media win / loss", (t.avg_win?("+"+t.avg_win.toFixed(0)):"—")+" / "+(t.avg_loss?t.avg_loss.toFixed(0):"—"), "in $") +
+    card("Profit factor", pf, "vincite ÷ perdite", (pf!=="—"&&(pf==="∞"||parseFloat(pf)>=1))?"pos":"neg");
+
+  drawCurve(d.realized_curve);
+  $("#updated").textContent = "aggiornato " + new Date(d.ts).toLocaleTimeString("it-IT");
+  $("#footer").textContent = "Auto-refresh 30s · dati live da Binance Futures Testnet · il bot gira su Oracle Cloud.";
+}
+
+function drawCurve(pts){
+  const c=$("#curve"), dpr=window.devicePixelRatio||1;
+  const W=c.clientWidth, H=120; c.width=W*dpr; c.height=H*dpr;
+  const x=c.getContext("2d"); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
+  if(!pts||pts.length<2) return;
+  const ys=pts.map(p=>p[1]), min=Math.min(...ys,0), max=Math.max(...ys,0), range=(max-min)||1;
+  const px=i=>i/(pts.length-1)*(W-8)+4, py=v=>H-6-((v-min)/range)*(H-16);
+  // zero line
+  x.strokeStyle=getComputedStyle(document.body).getPropertyValue("--line"); x.lineWidth=1;
+  x.beginPath(); x.moveTo(0,py(0)); x.lineTo(W,py(0)); x.stroke();
+  const last=ys[ys.length-1];
+  x.strokeStyle=last>=0?getComputedStyle(document.body).getPropertyValue("--green")
+                       :getComputedStyle(document.body).getPropertyValue("--red");
+  x.lineWidth=1.8; x.beginPath();
+  pts.forEach((p,i)=>{ i?x.lineTo(px(i),py(p[1])):x.moveTo(px(i),py(p[1])); }); x.stroke();
+}
+
+async function refresh(first){
+  const pw = sessionStorage.getItem("pw");
+  if(!pw){ $("#login").style.display="block"; $("#app").style.display="none"; return; }
+  try{
+    const r = await fetch("/api/state?pw="+encodeURIComponent(pw), {cache:"no-store"});
+    if(r.status===401){ sessionStorage.removeItem("pw"); if(first) $("#loginerr").textContent="Password sbagliata."; else logout(); return; }
+    const d = await r.json();
+    if(d.error){ $("#loginerr").textContent=d.error; if(first){$("#login").style.display="block";$("#app").style.display="none";} return; }
+    $("#login").style.display="none"; $("#app").style.display="block";
+    render(d);
+  }catch(err){ if(first) $("#loginerr").textContent="Errore di rete: "+err.message; }
+}
+
+$("#pw").addEventListener("keydown", e=>{ if(e.key==="Enter") login(); });
+if(sessionStorage.getItem("pw")){ $("#login").style.display="none"; refresh(true); }
+setInterval(()=>{ if(sessionStorage.getItem("pw")) refresh(false); }, 30000);
+</script>
+</body>
+</html>
