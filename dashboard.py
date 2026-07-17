@@ -20,6 +20,7 @@ from streamlit_autorefresh import st_autorefresh
 from config import CFG, STRATEGY_ALLOCATIONS, TOTAL_CAPITAL_USDT
 import execution
 import journal
+import memory
 import performance
 
 
@@ -135,12 +136,34 @@ def load_realized_history() -> pd.DataFrame:
         return pd.DataFrame()
     if not rows:
         return pd.DataFrame()
+    # Only the CLEAN run: drop pre-reset events (contaminated by the double-instance
+    # bug). Everything downstream ("since reset" P&L, per-crypto, concentration,
+    # cumulative curve) is then automatically post-reset.
     df = pd.DataFrame([
         {"ts": pd.to_datetime(int(r["time"]), unit="ms", utc=True),
          "symbol": r.get("symbol", ""), "pnl": float(r["income"])}
-        for r in rows
+        for r in rows if int(r.get("time", 0)) >= CFG.RESET_TS_MS
     ]).sort_values("ts")
     return df
+
+
+@st.cache_data(ttl=300)
+def load_btc_benchmark(start_iso: str) -> dict[str, float]:
+    """BTC buy-and-hold return over [start, now] — the beta benchmark that tells
+    skill (alpha) from a rising tide. Returns {} on failure."""
+    try:
+        client = execution.make_client()
+        start_ms = int(pd.Timestamp(start_iso).timestamp() * 1000)
+        kl = client.futures_klines(symbol="BTCUSDT", interval="1h",
+                                   startTime=start_ms, limit=1)
+        btc_start = float(kl[0][1]) if kl else 0.0  # open of the first candle at/after start
+        btc_now = float(client.futures_symbol_ticker(symbol="BTCUSDT")["price"])
+        if not btc_start:
+            return {}
+        return {"btc_start": btc_start, "btc_now": btc_now,
+                "btc_ret_pct": (btc_now / btc_start - 1) * 100}
+    except Exception:
+        return {}
 
 
 @st.cache_data(ttl=60)
@@ -189,7 +212,7 @@ def load_journal() -> dict[str, pd.DataFrame]:
         system_events = pd.read_sql_query(
             "SELECT ts, level, msg FROM events WHERE level IN "
             "('WS_STALE','FATAL','HALT','KILL_SOFT','RESUME','TRIGGER_DROPPED',"
-            "'RISK_BACKSTOP','ERROR','NOTIONAL_CAP','WARN','SERVER_EXIT_CLEANUP') "
+            "'RISK_BACKSTOP','ERROR','NOTIONAL_CAP','WARN','SERVER_EXIT_CLEANUP','REFLECT') "
             "ORDER BY id DESC LIMIT 12",
             c, parse_dates=["ts"],
         )
@@ -241,6 +264,23 @@ n_short = len(positions) - n_long
 # SEZIONE 1 — I SOLDI (la domanda: quanto ho messo, quanto vale, quanto ho fatto)
 # ============================================================================
 st.markdown("### 💰 I soldi")
+
+# --- Riassunto in una frase: quanto ho guadagnato, in $ e in % ---
+_verbo = "guadagnato" if pnl_total >= 0 else "perso"
+_emoji = "🟢" if pnl_total >= 0 else "🔴"
+st.markdown(
+    f"<div style='font-size:1.35rem;font-weight:600;margin:2px 0 2px 0'>"
+    f"{_emoji} Finora hai {_verbo} <span style='color:{'#00a15a' if pnl_total>=0 else '#d13b3b'}'>"
+    f"${abs(pnl_total):,.2f} ({pnl_total_pct:+.2f}%)</span></div>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    f"<div style='color:#555;margin-bottom:10px'>= <b>${pnl_realized:+,.2f}</b> già realizzati "
+    f"(chiusi, soldi veri in tasca) &nbsp;+&nbsp; <b>${unrealized:+,.2f}</b> sulla carta "
+    f"(posizioni aperte, ancora ballerino) &nbsp;·&nbsp; su un capitale iniziale di "
+    f"${initial_capital:,.2f}</div>",
+    unsafe_allow_html=True,
+)
 st.caption(
     f"Capitale iniziale = saldo reale al reset del 15/07/2026. "
     f"P&L totale = valore di adesso − capitale iniziale, scomposto in **realizzato** "
@@ -258,6 +298,160 @@ c4.metric("→ di cui realizzato", f"${pnl_realized:+,.2f}",
           help="Risultato dei trade GIÀ CHIUSI (cassa − capitale iniziale). Questi soldi sono definitivi.")
 c5.metric("→ di cui sulla carta", f"${unrealized:+,.2f}",
           help="P&L delle posizioni ancora aperte. Diventa realizzato solo alla chiusura (stop/target).")
+
+st.divider()
+
+# ============================================================================
+# SEZIONE 1.4 — QUANTO HO GUADAGNATO, CRYPTO PER CRYPTO
+# ============================================================================
+st.markdown("### 🪙 Quanto ho guadagnato, crypto per crypto")
+st.caption(
+    "Il guadagno totale spaccato per moneta. **Realizzato** = trade su quella crypto GIÀ chiusi "
+    "(soldi veri incassati). **Non realizzato** = P&L della posizione ancora aperta su quella crypto "
+    "(cambia coi prezzi, diventa reale solo alla chiusura). **Totale** = realizzato + non realizzato. "
+    f"**% sul capitale** = quel totale rispetto al capitale iniziale (${initial_capital:,.0f})."
+)
+
+# Realizzato per simbolo (dal reset, da income history) + non realizzato per posizione aperta
+realized_by_sym: dict[str, float] = {}
+if not realized_df.empty:
+    realized_by_sym = realized_df.groupby("symbol")["pnl"].sum().to_dict()
+unreal_by_sym = {p["symbol"]: float(p["unrealized_pnl"]) for p in positions}
+open_syms_pc = set(unreal_by_sym)
+all_syms_pc = set(realized_by_sym) | open_syms_pc
+
+if all_syms_pc:
+    rows_pc = []
+    for sym in all_syms_pc:
+        r = float(realized_by_sym.get(sym, 0.0))
+        u = float(unreal_by_sym.get(sym, 0.0))
+        tot = r + u
+        rows_pc.append({
+            "Crypto": sym.replace("USDT", ""),
+            "Stato": "🔵 aperta" if sym in open_syms_pc else "⚪ chiusa",
+            "Realizzato $": r,
+            "Non realizzato $": u,
+            "Totale $": tot,
+            "% sul capitale": tot / initial_capital if initial_capital else 0.0,
+        })
+    rows_pc.sort(key=lambda x: -x["Totale $"])
+    df_pc = pd.DataFrame(rows_pc)
+
+    tot_real = sum(r["Realizzato $"] for r in rows_pc)
+    tot_unreal = sum(r["Non realizzato $"] for r in rows_pc)
+    tot_all = tot_real + tot_unreal
+    winners = [r for r in rows_pc if r["Totale $"] > 0]
+    losers = [r for r in rows_pc if r["Totale $"] < 0]
+
+    st.dataframe(
+        df_pc, width='stretch', hide_index=True,
+        column_config={
+            "Stato": st.column_config.TextColumn(help="🔵 posizione ancora aperta (ha un P&L sulla carta) · ⚪ solo trade chiusi."),
+            "Realizzato $": st.column_config.NumberColumn(format="$%+.2f", help="Somma dei trade GIÀ CHIUSI su questa crypto dal reset. Soldi definitivi."),
+            "Non realizzato $": st.column_config.NumberColumn(format="$%+.2f", help="P&L della posizione aperta ora su questa crypto. Zero se non ne hai aperta una."),
+            "Totale $": st.column_config.NumberColumn(format="$%+.2f", help="Realizzato + non realizzato: il contributo complessivo di questa crypto."),
+            "% sul capitale": st.column_config.NumberColumn(format="percent", help="Totale della crypto ÷ capitale iniziale."),
+        },
+    )
+    cc1, cc2, cc3 = st.columns(3)
+    cc1.metric("Totale realizzato (tutte)", f"${tot_real:+,.2f}",
+               help="Somma del realizzato di ogni crypto = P&L in tasca.")
+    cc2.metric("Totale non realizzato (tutte)", f"${tot_unreal:+,.2f}",
+               help="Somma del non realizzato = P&L sulla carta delle posizioni aperte.")
+    cc3.metric("Totale complessivo", f"${tot_all:+,.2f}", f"{tot_all/initial_capital*100:+.2f}% del capitale" if initial_capital else "—",
+               help="Deve coincidere col P&L totale in cima.")
+    if winners or losers:
+        top_w = max(rows_pc, key=lambda r: r["Totale $"])
+        top_l = min(rows_pc, key=lambda r: r["Totale $"])
+        st.caption(
+            f"🏆 Migliore: **{top_w['Crypto']}** ${top_w['Totale $']:+,.2f} · "
+            f"💀 Peggiore: **{top_l['Crypto']}** ${top_l['Totale $']:+,.2f} · "
+            f"{len(winners)} crypto in positivo / {len(losers)} in negativo."
+        )
+else:
+    st.info("Ancora nessun trade chiuso né posizione aperta con P&L da mostrare.")
+
+st.divider()
+
+# ============================================================================
+# SEZIONE 1.5 — BRAVURA O FORTUNA? (alpha vs BTC, drawdown, concentrazione)
+# ============================================================================
+st.markdown("### 🎲 Bravura o fortuna?")
+st.caption(
+    "Guadagnare in un mercato che sale non prova nulla: la domanda vera è se batti "
+    "il semplice **comprare-e-tenere BTC** (alpha), quanto hai rischiato per farlo "
+    "(**drawdown**) e se il profitto è vero o regge su 2 colpi fortunati (**concentrazione**)."
+)
+
+eq_live_bf = eq_df[eq_df["source"] == "live"].sort_values("ts") if not eq_df.empty else pd.DataFrame()
+
+# --- Riga A: alpha vs BTC buy-and-hold sulla stessa finestra ---
+if not eq_live_bf.empty:
+    start_ts = eq_live_bf["ts"].iloc[0]
+    equity_start = float(eq_live_bf["total_equity"].iloc[0])
+    strat_ret_pct = (equity_now / equity_start - 1) * 100 if equity_start else 0.0
+    bench = load_btc_benchmark(start_ts.isoformat())
+    days_running = (pd.Timestamp.now(tz="UTC") - start_ts).total_seconds() / 86400
+
+    a1, a2, a3 = st.columns(3)
+    a1.metric(f"Rendimento strategia ({days_running:.1f}g)", f"{strat_ret_pct:+.2f}%",
+              help="Variazione dell'equity da inizio tracciamento, sulla stessa finestra del benchmark.")
+    if bench:
+        btc_ret = bench["btc_ret_pct"]
+        alpha = strat_ret_pct - btc_ret
+        a2.metric("BTC buy-and-hold (stessa finestra)", f"{btc_ret:+.2f}%",
+                  help="Cosa avresti fatto comprando BTC all'inizio e tenendolo, senza fare nulla.")
+        a3.metric("Alpha (strategia − BTC)", f"{alpha:+.2f}%",
+                  help="Il numero che conta: quanto BATTI (o perdi contro) il semplice tenere BTC. "
+                       "Positivo = c'è bravura oltre alla marea. Negativo = stai solo cavalcando (male) il mercato.")
+        if alpha > 2:
+            st.success(f"✅ Stai battendo BTC di **{alpha:+.1f}%** su questa finestra: c'è segnale di alpha "
+                       f"(ma {days_running:.1f} giorni sono pochi — serve conferma su settimane e su una fase ribassista).")
+        elif alpha < -2:
+            st.warning(f"⚠️ Stai facendo **{alpha:+.1f}%** rispetto a BTC: in questa finestra tenere BTC e non fare "
+                       f"nulla avrebbe reso di più. Il guadagno è beta (marea), non bravura.")
+        else:
+            st.info(f"➖ Sei sostanzialmente in linea con BTC (**{alpha:+.1f}%**): finora è soprattutto il mercato, "
+                    f"non un edge dimostrato. Il verdetto arriva quando BTC scende e vediamo come reagisce il book.")
+    else:
+        a2.metric("BTC buy-and-hold", "—", help="Benchmark non disponibile (API non raggiungibile).")
+        a3.metric("Alpha", "—")
+else:
+    st.info("Servono almeno due rilevazioni di equity per calcolare rendimento e alpha (arriva al primo ciclo).")
+
+# --- Riga B: rischio (drawdown) e qualità (concentrazione) ---
+b1, b2, b3 = st.columns(3)
+
+# Max drawdown dalla curva equity live
+if not eq_live_bf.empty and len(eq_live_bf) >= 2:
+    series = eq_live_bf["total_equity"].astype(float)
+    dd_series = (series / series.cummax() - 1) * 100
+    max_dd = float(dd_series.min())
+    b1.metric("Max drawdown", f"{max_dd:.2f}%",
+              help="La peggior discesa da un massimo dell'equity. Un bot si giudica da come sopravvive alle "
+                   "discese, non dai picchi. Vicino a 0% = non hai ancora visto una vera giornata storta.")
+else:
+    b1.metric("Max drawdown", "—", help="Servono più punti di equity.")
+
+# Concentrazione dei profitti dai trade realizzati
+if not realized_df.empty and len(realized_df) >= 3:
+    pnls = realized_df["pnl"].astype(float).sort_values(ascending=False)
+    total_realized = float(pnls.sum())
+    top2 = float(pnls.head(2).sum())
+    gross_profit = float(pnls[pnls > 0].sum())
+    without_top2 = total_realized - top2
+    top2_share = (top2 / gross_profit * 100) if gross_profit > 0 else 0.0
+    b2.metric("Peso dei 2 migliori trade", f"{top2_share:.0f}% del profitto lordo",
+              help="Quanta parte di TUTTE le vincite arriva dai soli 2 trade migliori. Alto (>50%) = il risultato "
+                   "regge su pochi colpi fortunati; basso = profitto diffuso e più affidabile.")
+    b3.metric("Risultato togliendo i top-2", f"${without_top2:+,.2f}",
+              help="Il P&L realizzato SENZA i due trade migliori. Se resta positivo, l'edge è diffuso; "
+                   "se crolla in negativo, finora hai vissuto di 2 colpi.")
+    if gross_profit > 0 and top2_share > 60:
+        st.caption("⚠️ Oltre il 60% delle vincite viene da 2 trade: campione fragile, non trarre conclusioni ancora.")
+else:
+    b2.metric("Peso dei 2 migliori trade", "—")
+    b3.metric("Risultato togliendo i top-2", "—", help="Servono almeno 3 trade chiusi.")
 
 st.divider()
 
@@ -408,6 +602,61 @@ perf_text = load_perf_review_text()
 if perf_text:
     with st.expander("📋 Il blocco di auto-correzione esattamente come lo legge Claude"):
         st.code(perf_text, language=None)
+
+# --- 4a-bis. La MEMORIA a lungo termine (esperienza accumulata) ---
+st.markdown("---")
+last_reflect = memory.seconds_since_last_reflection()
+reflect_str = "mai" if last_reflect is None else (
+    f"{last_reflect/3600:.1f}h fa" if last_reflect < 86400 else f"{last_reflect/86400:.1f}g fa")
+st.markdown(
+    f"**🧬 La memoria del bot** — l'esperienza che si porta dietro tra una decisione e l'altra. "
+    f"Ogni giorno rilegge i propri trade + esiti e riscrive le sue *lezioni durature*; "
+    f"le rilegge poi ad ogni scelta. _(ultima riflessione: {reflect_str})_"
+)
+mem_col1, mem_col2 = st.columns([3, 2])
+
+with mem_col1:
+    st.markdown("**📓 Lezioni che ha imparato da solo** (le riscrive riflettendo sui propri risultati)")
+    lessons = journal.get_active_lessons(limit=CFG.MEMORY_MAX_LESSONS)
+    if lessons:
+        for l in lessons:
+            scope = l.get("scope") or "global"
+            badge = "🌐 globale" if scope == "global" else f"🎯 {scope.replace('USDT', '')}"
+            st.markdown(
+                f"<div style='border-left:3px solid #00b386;padding:5px 12px;margin:5px 0;"
+                f"background:#f2fbf8;border-radius:4px'>"
+                f"<span style='font-size:0.72rem;color:#86868b'>{badge}</span><br/>{l['text']}</div>",
+                unsafe_allow_html=True,
+            )
+    else:
+        st.info("Nessuna lezione ancora — la prima riflessione parte poche ore dopo l'avvio, "
+                "quando c'è abbastanza storico di trade.")
+
+with mem_col2:
+    st.markdown(f"**📈 Track record per crypto** (ultimi {CFG.MEMORY_LOOKBACK_DAYS}g — chi paga, chi brucia)")
+    if not realized_df.empty:
+        cutoff_m = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=CFG.MEMORY_LOOKBACK_DAYS)
+        mem_win = realized_df[realized_df["ts"] >= cutoff_m]
+        if not mem_win.empty:
+            grp = mem_win.groupby("symbol")["pnl"].agg(
+                trade="count", net="sum",
+                win=lambda s: int((s > 0).sum()), loss=lambda s: int((s < 0).sum()))
+            grp = grp.reset_index()
+            grp["Crypto"] = grp["symbol"].str.replace("USDT", "")
+            grp["W/L"] = grp["win"].astype(str) + "/" + grp["loss"].astype(str)
+            grp["Esito"] = grp["net"].map(lambda n: "🟢 paga" if n > 0 else ("🔴 brucia" if n < 0 else "⚪"))
+            grp = grp.sort_values(["trade", "net"], ascending=[False, False]).head(CFG.MEMORY_SYMBOL_TOP_N)
+            show = grp[["Crypto", "W/L", "net", "Esito"]].rename(columns={"net": "Netto $"})
+            st.dataframe(
+                show, width='stretch', hide_index=True,
+                column_config={"Netto $": st.column_config.NumberColumn(format="$%+.1f")},
+            )
+        else:
+            st.info("Nessun trade chiuso nella finestra.")
+    else:
+        st.info("Storico non disponibile.")
+
+st.markdown("---")
 
 # --- 4b. Ultima vista macro + decisioni per crypto ---
 dec = journal_data["decisions"]
@@ -643,7 +892,7 @@ with st.expander("🩺 Salute sistema — eventi stream / risk engine"):
             "KILL_SOFT": "⏸️ Pausa (soft kill)", "RESUME": "▶️ Ripresa",
             "TRIGGER_DROPPED": "🔇 Trigger scartati", "RISK_BACKSTOP": "🚨 Backstop ciclo",
             "ERROR": "❌ Errore", "NOTIONAL_CAP": "🧢 Cap esposizione", "WARN": "⚠️ Warning",
-            "SERVER_EXIT_CLEANUP": "🧹 Pulizia ordini",
+            "SERVER_EXIT_CLEANUP": "🧹 Pulizia ordini", "REFLECT": "🧬 Riflessione (memoria)",
         }
         ev_display = sys_ev.copy()
         ev_display["Tipo"] = ev_display["level"].map(level_map).fillna(ev_display["level"])
@@ -661,6 +910,10 @@ with st.expander("📖 Glossario — significato di ogni termine"):
 **P&L realizzato** — Il risultato dei trade già chiusi. Soldi veri, definitivi.
 
 **P&L sulla carta (non realizzato)** — Il guadagno/perdita delle posizioni ancora aperte ai prezzi attuali. Cambia di continuo; diventa realizzato alla chiusura.
+
+**Guadagno per crypto** — Lo stesso P&L, ma spaccato per moneta: quanto hai già incassato (realizzato) e quanto è ancora aperto (non realizzato) su ciascuna. La somma dei "Totale $" di ogni crypto = il P&L totale del conto. Serve a capire quali monete ti fanno guadagnare e quali ti costano.
+
+**% sul capitale** — Il contributo di una crypto (o del totale) diviso il capitale iniziale ($3.912,89). Mette tutte le monete sulla stessa scala confrontabile.
 
 **Margine** — I soldi tuoi "in pegno" per tenere aperta una posizione con leva. Con leva 10x, $100 di margine controllano $1.000 di crypto.
 
@@ -683,6 +936,14 @@ with st.expander("📖 Glossario — significato di ogni termine"):
 **Trigger (⏰/⚡)** — Cosa ha attivato la decisione: il ciclo periodico (4h) o un evento (segnale tecnico, stop scattato, movimento improvviso).
 
 **Profit factor** — Somma delle vincite ÷ somma delle perdite. Sopra 1.0 la strategia è in utile.
+
+**Alpha (vs BTC)** — Rendimento della strategia meno il rendimento di comprare-e-tenere BTC sulla stessa finestra. Positivo = c'è bravura oltre alla marea del mercato (beta); negativo o zero = stai solo seguendo il mercato. È il test più onesto per capire se serve o no.
+
+**Max drawdown** — La peggior discesa percentuale da un massimo dell'equity. Misura quanto dolore ha già dato la strategia: un bot si giudica da qui, non dai picchi.
+
+**Concentrazione dei profitti** — Quanta parte delle vincite arriva dai pochi trade migliori. Se togliendo i 2 top-trade il risultato crolla, l'edge non è diffuso: è fortuna concentrata.
+
+**Memoria / Lezioni** — L'esperienza che il bot accumula: ogni giorno rilegge i propri trade e i loro esiti e riscrive un elenco di lezioni durature (es. "smetti di shortare X, ti squeeza"), che poi rilegge ad ogni decisione. Più il track record per crypto (chi paga, chi brucia). È così che "impara" pur essendo l'API senza memoria propria.
 
 **Testnet** — Ambiente di test Binance, soldi finti, prezzi reali.
         """

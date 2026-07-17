@@ -41,6 +41,13 @@ class Config:
     # respective entries in STRATEGY_ALLOCATIONS.
     INITIAL_CAPITAL_USDT: float = STRATEGY_ALLOCATIONS["aggressive"]
     TOTAL_CAPITAL_USDT: float = TOTAL_CAPITAL_USDT
+    # Clean-run start: the 2026-07-15 reset flattened every position and rebased
+    # capital to $3912.89 AFTER the flatten. Binance income history is NOT reset,
+    # so it still holds the contaminated pre-reset trades (incl. the −$1141 from
+    # the double-instance bug). Anything that reports "since reset" — per-symbol
+    # P&L, drawdown, concentration — must filter realized events to ≥ this epoch.
+    # (Boundary sits after the 18:15 flatten cluster, before the first real trade.)
+    RESET_TS_MS: int = 1784142000000  # 2026-07-15 19:00:00 UTC
 
     # ---- Leverage & sizing (operator-chosen aggressive profile) ----
     LEVERAGE: int = 10
@@ -149,6 +156,20 @@ class Config:
     # ---- News trigger (CryptoPanic) ----
     NEWS_TRIGGER_ENABLED: bool = True          # needs CRYPTOPANIC_TOKEN in .env, else auto-disabled
     NEWS_POLL_SECONDS: int = 600               # poll headlines every 10 min
+
+    # ---- Long-term memory (reflection loop — see memory.py) ----
+    # The bot runs for months; the API is stateless. Once a day it re-reads its
+    # own decisions + realized outcomes and rewrites a small, durable lesson set
+    # that gets injected (with a free per-symbol track record) into every future
+    # decision. Bounded in size so it stays token-cheap; one paid call/day.
+    MEMORY_ENABLED: bool = True
+    MEMORY_LOOKBACK_DAYS: int = 30       # window for the per-symbol track record
+    MEMORY_MAX_LESSONS: int = 12         # hard cap on the active lesson set
+    MEMORY_SYMBOL_TOP_N: int = 12        # per-symbol lines injected on baseline calls
+    REFLECT_ENABLED: bool = True
+    REFLECT_INTERVAL_SECONDS: int = 24 * 60 * 60  # distill lessons once a day
+    REFLECT_MAX_TOKENS: int = 1200       # the reflection output is a short list
+    REFLECT_DECISIONS_SAMPLE: int = 12   # recent market views fed to the reflection
 
     # ---- Emergency rail (instrumentation, not strategy block) ----
     EQUITY_FLOOR_PCT: float = 0.20  # auto-halt if equity < 20% of initial

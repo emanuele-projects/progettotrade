@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from config import CFG
+
 
 def build_performance_review(client, lookback_days: int = 7,
                              max_events: int = 60) -> str | None:
@@ -22,7 +24,11 @@ def build_performance_review(client, lookback_days: int = 7,
     if not rows:
         return None
 
+    # Floor the window at the clean-run reset: pre-reset trades were contaminated
+    # by the double-instance bug, so learning from them would mislead. Until the
+    # reset is >lookback_days old this floor is what actually bounds the window.
     cutoff_ms = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).timestamp() * 1000
+    cutoff_ms = max(cutoff_ms, float(CFG.RESET_TS_MS))
     events = [(float(r["income"]), r.get("symbol", ""), int(r["time"]))
               for r in rows if int(r.get("time", 0)) >= cutoff_ms]
     if not events:

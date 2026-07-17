@@ -79,7 +79,16 @@
   </div>
 
   <h2>💰 I soldi</h2>
+  <div id="summary" class="note" style="border-left-color:var(--green)"></div>
   <div class="grid" id="money"></div>
+
+  <h2>🪙 Guadagno per crypto</h2>
+  <div class="sub" style="margin-bottom:8px"><b>Realizzato</b> = trade chiusi su quella crypto (incassato). <b>Non realizzato</b> = posizione ancora aperta (sulla carta). <b>Totale</b> = somma dei due. <b>% cap.</b> = totale ÷ capitale iniziale.</div>
+  <div style="overflow-x:auto"><table id="pertable"></table></div>
+
+  <h2>🎲 Bravura o fortuna?</h2>
+  <div class="sub" style="margin-bottom:8px">Guadagnare in un mercato che sale non prova nulla: batti il semplice comprare-e-tenere BTC (<b>alpha</b>)? E quanto sei sceso dai massimi (<b>drawdown</b>)?</div>
+  <div class="grid" id="quality"></div>
 
   <h2>📦 Quanto è investito adesso</h2>
   <div class="grid" id="exposure"></div>
@@ -121,6 +130,15 @@ function card(lab, val, hint, klass){
 
 function render(d){
   const m=d.money, e=d.exposure;
+
+  // one-line summary: quanto ho guadagnato
+  const verbo = m.pnl_total>=0 ? "guadagnato" : "perso";
+  $("#summary").innerHTML =
+    `<div style="font-size:1.2rem;font-weight:650">${m.pnl_total>=0?'🟢':'🔴'} Finora hai ${verbo} `+
+    `<span class="${cls(m.pnl_total)}">${eur(m.pnl_total)} (${pct(m.pnl_total_pct)})</span></div>`+
+    `<div class="dim" style="margin-top:4px">= <b>${eur(m.pnl_realized)}</b> già realizzati (in tasca) + `+
+    `<b>${eur(m.unrealized)}</b> sulla carta (posizioni aperte) · capitale iniziale ${eur(m.initial)}</div>`;
+
   $("#money").innerHTML =
     card("Capitale iniziale", eur(m.initial), "baseline dal reset 15/07") +
     card("Valore conto ORA", eur(m.equity), pct(m.pnl_total_pct)+" dall'inizio", cls(m.pnl_total)) +
@@ -131,10 +149,38 @@ function render(d){
   const bias = e.total_exposure? (e.net_exp/e.total_exposure*100):0;
   $("#exposure").innerHTML =
     card("Margine impegnato", eur0(e.deployed_margin), e.deployed_pct.toFixed(0)+"% del conto") +
-    card("Disponibile", eur0(e.available), "liquidità libera") +
+    card("Disponibile", eur0(m.available), "liquidità libera") +
     card("Esposizione totale", eur0(e.total_exposure), "leva media "+e.avg_leverage.toFixed(1)+"x") +
     card("Long vs Short", e.n_long+"L / "+e.n_short+"S", eur0(e.long_exp)+" vs "+eur0(e.short_exp)) +
     card("Esposizione netta", (e.net_exp>=0?"+":"")+eur0(e.net_exp), pct(bias).replace('%','%')+" "+(e.net_exp>=0?"long":"short")+" bias", cls(e.net_exp));
+
+  // per-crypto P&L
+  const ps = d.per_symbol || [];
+  let pr = `<tr><th>Crypto</th><th>Stato</th><th>Realizzato</th><th>Non realizz.</th><th>Totale</th><th>% cap.</th></tr>`;
+  for(const s of ps){
+    pr += `<tr>
+      <td><b>${s.base}</b></td>
+      <td class="dim">${s.open?'🔵 aperta':'⚪ chiusa'}</td>
+      <td class="${cls(s.realized)}">${eur(s.realized)}</td>
+      <td class="${cls(s.unrealized)}">${eur(s.unrealized)}</td>
+      <td class="${cls(s.total)}"><b>${eur(s.total)}</b></td>
+      <td class="${cls(s.pct)}">${pct(s.pct)}</td>
+    </tr>`;
+  }
+  if(!ps.length) pr += `<tr><td colspan="6" class="dim">Ancora nessun trade da mostrare.</td></tr>`;
+  $("#pertable").innerHTML = pr;
+
+  // bravura o fortuna: alpha vs BTC + max drawdown
+  const b=d.benchmark, rk=d.risk||{};
+  let q = "";
+  if(b){
+    q += card("Rendimento strategia", pct(b.strat_ret_pct), "dal reset", cls(b.strat_ret_pct)) +
+         card("BTC compra&tieni", pct(b.btc_ret_pct), "stessa finestra", cls(b.btc_ret_pct)) +
+         card("Alpha (vs BTC)", pct(b.alpha_pct), "quanto batti BTC", cls(b.alpha_pct));
+  }
+  if(rk.max_drawdown_pct!==undefined)
+    q += card("Max drawdown", rk.max_drawdown_pct.toFixed(2)+"%", "realizzato, dai massimi", rk.max_drawdown_pct<0?"neg":"");
+  $("#quality").innerHTML = q || `<div class="card dim">Dati insufficienti.</div>`;
 
   // positions
   $("#posTitle").innerHTML = `📊 Portafoglio — ${d.positions.length} posizioni <span class="dim" style="font-size:.8rem;font-weight:400">(mandato min ${d.mandate.min} · target ${d.mandate.target})</span>`;

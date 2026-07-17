@@ -192,6 +192,12 @@ SELF-CORRECTION — LEARN FROM YOUR OWN TRACK RECORD:
 - Treat it as a mirror and change behavior accordingly — WITHIN the always-invested mandate. A poor win-rate is fixed by dropping leverage (5x-10x across the book), widening stops, balancing long/short exposure, and rotating toward the setups that HAVE been working — never by shrinking the book below 10.
 - If one whole side (longs or shorts) keeps losing in the current regime, tilt the balance toward the other side. A poor track record means your current reads are not working: change the MIX, not the investment level.
 
+LONG-TERM MEMORY — YOUR ACCUMULATED EXPERIENCE (this bot runs for months):
+- You also receive a "=== YOUR MEMORY ===" block with two things: (a) a PER-SYMBOL realized track record over the last weeks — which names have PAID you (WORKING) and which have BURNED you (BURNING) — and (b) a short list of DURABLE LESSONS you distilled by reflecting on your own past trades.
+- This is hard-won experience, not a rule sheet. Use it to shape SELECTION and CONVICTION: prefer names/setups that have worked, be skeptical of names that keep losing (a low win-rate on a symbol is a reason to size down, widen the stop, or pick a better candidate — not to blindly avoid it), and honor your lessons unless the live data in front of you clearly contradicts them.
+- The lessons are YOURS: you wrote them from your results and you rewrite them daily. Treat them as your own considered judgement carried forward.
+- Memory informs which trades and how much conviction — it NEVER overrides the always-invested mandate, the SL/TP ranges, or the max leverage.
+
 CRITICAL CONSTRAINTS:
 - Output decisions only via the `submit_decisions` tool.
 - For each candidate, return exactly one decision (long, short or flat).
@@ -293,6 +299,7 @@ def build_user_prompt(
     focused: bool = False,
     perf_review: str | None = None,
     portfolio_status: str | None = None,
+    memory_block: str | None = None,
 ) -> str:
     parts: list[str] = []
     if trigger_lines:
@@ -304,6 +311,9 @@ def build_user_prompt(
         parts.append("")
     if perf_review:
         parts.append(perf_review)
+        parts.append("")
+    if memory_block:
+        parts.append(memory_block)
         parts.append("")
     parts.append("=== MACRO ===")
     parts.append(
@@ -428,6 +438,7 @@ def decide(
     focused: bool = False,
     perf_review: str | None = None,
     portfolio_status: str | None = None,
+    memory_block: str | None = None,
 ) -> tuple[Decision, dict]:
     """Get decisions from the configured source. Returns (decision, usage);
     usage carries token counts (API mode) and the deciding model.
@@ -440,6 +451,7 @@ def decide(
         trigger_lines=trigger_lines, focused=focused,
         perf_review=perf_review,
         portfolio_status=portfolio_status,
+        memory_block=memory_block,
     )
 
     if CFG.DECISION_SOURCE == "file":

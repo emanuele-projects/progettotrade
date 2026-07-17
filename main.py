@@ -22,6 +22,7 @@ import data
 import events
 import execution
 import journal
+import memory
 import performance
 import risk_engine
 import scanner
@@ -263,6 +264,11 @@ def baseline_cycle(client: Client, log: logging.Logger,
     if perf_review:
         log.info("self-correction: " + perf_review.splitlines()[1])  # the win-rate/net line
 
+    memory_block = memory.build_memory_block(client) if CFG.MEMORY_ENABLED else None
+    if memory_block:
+        n_lessons = len(journal.get_active_lessons(limit=CFG.MEMORY_MAX_LESSONS))
+        log.info(f"memory: injected per-symbol record + {n_lessons} durable lessons")
+
     portfolio_status = strategy.build_portfolio_status(len(open_serialized))
     if len(open_serialized) < CFG.MIN_OPEN_POSITIONS:
         log.info(f"portfolio under minimum: {len(open_serialized)}/{CFG.MIN_OPEN_POSITIONS}")
@@ -273,6 +279,7 @@ def baseline_cycle(client: Client, log: logging.Logger,
         operator_notes=operator_notes,
         perf_review=perf_review,
         portfolio_status=portfolio_status,
+        memory_block=memory_block,
     )
     journal.log_decision(
         market_view=decision.market_view,
@@ -358,12 +365,20 @@ def focused_cycle(client: Client, log: logging.Logger, triggers: list["events.Tr
     operator_notes = journal.get_active_operator_notes()
     trigger_lines = [f"[{t.kind}] {t.symbol or 'global'}: {t.detail or '-'}" for t in triggers[:10]]
 
+    # Focused memory: lessons + only the per-symbol record for the names in play
+    # (held ∪ affected ∪ refill) — keeps the off-cycle call token-light.
+    memory_block = None
+    if CFG.MEMORY_ENABLED:
+        in_play = held_syms | set(affected) | set(refill)
+        memory_block = memory.build_memory_block(client, symbols=in_play)
+
     log.info("calling Claude (focused)…")
     decision, usage = strategy.decide(
         candidate_features, open_serialized, fg, btc_features, news=[],
         operator_notes=operator_notes,
         trigger_lines=trigger_lines, focused=True,
         portfolio_status=strategy.build_portfolio_status(len(open_serialized)),
+        memory_block=memory_block,
     )
     trigger_tag = ",".join(sorted({t.kind for t in triggers}))
     journal.log_decision(
@@ -503,6 +518,16 @@ def main() -> None:
     # ---- event loop: baseline timer + trigger-driven focused cycles ----
     policy = events.TriggerPolicy()
     next_baseline = time.monotonic()  # first baseline runs immediately
+    # Reflection timer: distill the durable lesson set once/day. Persisted across
+    # restarts via journal meta, so a redeploy doesn't re-reflect immediately —
+    # if it's never run, do it shortly after startup once there's data.
+    _reflect_age = memory.seconds_since_last_reflection()
+    if not CFG.REFLECT_ENABLED:
+        next_reflect = float("inf")
+    elif _reflect_age is None:
+        next_reflect = time.monotonic() + 600  # first reflection ~10 min in
+    else:
+        next_reflect = time.monotonic() + max(0.0, CFG.REFLECT_INTERVAL_SECONDS - _reflect_age)
     soft_logged = False
     try:
         while True:
@@ -525,6 +550,13 @@ def main() -> None:
                 log.info("KILL_SWITCH removed — trading resumed.")
                 journal.log_event("RESUME", "kill switch removed")
                 soft_logged = False
+
+            # Daily reflection: re-read own trades+outcomes → rewrite the durable
+            # lesson set. One cheap call/day; never raises (best-effort memory).
+            if time.monotonic() >= next_reflect:
+                log.info("reflection: distilling durable lessons from recent trades…")
+                memory.reflect(client, log=log)
+                next_reflect = time.monotonic() + CFG.REFLECT_INTERVAL_SECONDS
 
             try:
                 # Wait for a trigger, capped so the kill switch is re-checked

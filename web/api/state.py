@@ -47,11 +47,17 @@ def _get(path: str, params: dict | None = None, signed: bool = False) -> object:
 
 def build_state() -> dict:
     initial = float(os.environ.get("INITIAL_CAPITAL", "3912.89"))
+    # Clean-run start (2026-07-15 reset). Binance income history is NOT reset, so
+    # it still holds pre-reset trades contaminated by the old double-instance bug
+    # (−$1141). Everything "since reset" filters realized events to ≥ this epoch.
+    # Override via env TRACK_START_MS if the account is ever rebased again.
+    reset_ms = int(os.environ.get("TRACK_START_MS", "1784142000000"))
 
     account = _get("/fapi/v2/account", signed=True)
     risk = _get("/fapi/v2/positionRisk", signed=True)
-    income = _get("/fapi/v1/income",
-                  {"incomeType": "REALIZED_PNL", "limit": 1000}, signed=True)
+    income_all = _get("/fapi/v1/income",
+                      {"incomeType": "REALIZED_PNL", "limit": 1000}, signed=True)
+    income = [r for r in income_all if int(r.get("time", 0)) >= reset_ms]
 
     equity = float(account["totalMarginBalance"])
     wallet = float(account["totalWalletBalance"])
@@ -129,6 +135,63 @@ def build_state() -> dict:
         running += v
         cum.append([t, round(running, 2)])
 
+    # --- per-symbol P&L (realized all-time from the reset + unrealized open) ---
+    realized_by_sym: dict[str, float] = {}
+    for r in income:
+        s = r.get("symbol", "")
+        if s:
+            realized_by_sym[s] = realized_by_sym.get(s, 0.0) + float(r["income"])
+    unreal_by_sym = {p["symbol"]: p["upnl"] for p in positions}
+    per_symbol = []
+    for s in set(realized_by_sym) | set(unreal_by_sym):
+        rz = realized_by_sym.get(s, 0.0)
+        uz = unreal_by_sym.get(s, 0.0)
+        tot = rz + uz
+        per_symbol.append({
+            "base": s.replace("USDT", ""),
+            "realized": round(rz, 2),
+            "unrealized": round(uz, 2),
+            "total": round(tot, 2),
+            "pct": (tot / initial * 100) if initial else 0.0,
+            "open": s in unreal_by_sym,
+        })
+    per_symbol.sort(key=lambda x: -x["total"])
+
+    # --- max drawdown on the REALIZED equity curve (initial + cumulative realized) ---
+    # No equity snapshots on Vercel (those live in the VM journal), so this is the
+    # drawdown of realized cash, not mark-to-market — labelled as such on the page.
+    max_dd = 0.0
+    peak = initial
+    for _, run in cum:
+        eqp = initial + run
+        if eqp > peak:
+            peak = eqp
+        if peak > 0:
+            dd = (eqp / peak - 1) * 100
+            if dd < max_dd:
+                max_dd = dd
+
+    # --- alpha vs BTC buy-and-hold over the run window (best-effort) ---
+    benchmark = None
+    try:
+        start_ms = min(int(r["time"]) for r in income) if income else None
+        if start_ms:
+            kl = _get("/fapi/v1/klines",
+                      {"symbol": "BTCUSDT", "interval": "1h", "startTime": start_ms, "limit": 1})
+            btc_start = float(kl[0][1]) if kl else 0.0
+            btc_now = float(_get("/fapi/v1/ticker/price", {"symbol": "BTCUSDT"})["price"])
+            if btc_start:
+                btc_ret = (btc_now / btc_start - 1) * 100
+                strat_ret = (equity / initial - 1) * 100 if initial else 0.0
+                benchmark = {
+                    "start_ms": start_ms,
+                    "btc_ret_pct": round(btc_ret, 2),
+                    "strat_ret_pct": round(strat_ret, 2),
+                    "alpha_pct": round(strat_ret - btc_ret, 2),
+                }
+    except Exception:
+        benchmark = None
+
     pnl_total = equity - initial
     return {
         "ts": now_ms,
@@ -154,7 +217,10 @@ def build_state() -> dict:
             "n_short": n_short,
         },
         "positions": positions,
+        "per_symbol": per_symbol,
         "track": track,
+        "benchmark": benchmark,
+        "risk": {"max_drawdown_pct": round(max_dd, 2)},
         "realized_curve": cum[-500:],
         "mandate": {"min": 10, "target": 12},
     }

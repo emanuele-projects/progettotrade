@@ -96,6 +96,21 @@ class TestPromptBuilding(unittest.TestCase):
         self.assertNotIn("{", strategy.SYSTEM_PROMPT.replace("{'", ""))
         self.assertGreater(len(strategy.SYSTEM_PROMPT), 3000)
 
+    def test_memory_block_injected_into_user_message(self):
+        # Long-term memory must ride in the USER message (never the cached system
+        # prompt), so the 1h cache stays valid while memory changes daily.
+        block = "=== YOUR MEMORY ===\n- [DOGE] stop shorting DOGE, it squeezes"
+        prompt = strategy.build_user_prompt(
+            candidates=[_features()], open_positions=[],
+            fear_greed={"value": 50, "classification": "Neutral"},
+            btc_features=_features(), news=[], memory_block=block,
+        )
+        self.assertIn("YOUR MEMORY", prompt)
+        self.assertIn("stop shorting DOGE", prompt)
+        # The dynamic memory CONTENT must never leak into the cached system prompt
+        # (the prompt only *describes* the memory block; the data rides the user msg).
+        self.assertNotIn("stop shorting DOGE", strategy.SYSTEM_PROMPT)
+
 
 class TestTolerantParsing(unittest.TestCase):
     def test_negative_take_profit_sign_flip(self):
