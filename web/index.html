@@ -6,49 +6,85 @@
 <title>Trading Bot — Dashboard</title>
 <style>
   :root{
-    --bg:#f6f6f8; --card:#ffffff; --ink:#1d1d1f; --muted:#6b6b76; --line:#e5e5ea;
-    --green:#0f9d58; --red:#d93025; --accent:#7c4dff; --accentbg:#f2effd;
+    --bg:#f4f5f9; --bg2:#eef0f6; --card:#ffffff; --ink:#16161a; --muted:#6b6b76; --line:#e5e6ee;
+    --green:#0f9d58; --red:#e0453a; --accent:#7c4dff; --accentbg:#f2effd; --chip:#f3f4f8;
+    --shadow:0 1px 3px rgba(20,20,40,.06),0 8px 24px rgba(20,20,40,.05);
   }
   @media (prefers-color-scheme: dark){
-    :root{ --bg:#0f0f12; --card:#1a1a1f; --ink:#ececf1; --muted:#9a9aa5; --line:#2b2b33;
-           --green:#3ddc84; --red:#ff5b52; --accent:#b39dff; --accentbg:#221d3a; }
+    :root{ --bg:#0c0c10; --bg2:#111117; --card:#17171e; --ink:#ececf1; --muted:#9a9aa7; --line:#26262f;
+           --green:#42dd8a; --red:#ff6157; --accent:#b39dff; --accentbg:#201b39; --chip:#1e1e27;
+           --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 28px rgba(0,0,0,.35);}
   }
+  :root[data-theme="light"]{ --bg:#f4f5f9; --bg2:#eef0f6; --card:#ffffff; --ink:#16161a; --muted:#6b6b76;
+           --line:#e5e6ee; --green:#0f9d58; --red:#e0453a; --accent:#7c4dff; --accentbg:#f2effd; --chip:#f3f4f8;
+           --shadow:0 1px 3px rgba(20,20,40,.06),0 8px 24px rgba(20,20,40,.05);}
+  :root[data-theme="dark"]{ --bg:#0c0c10; --bg2:#111117; --card:#17171e; --ink:#ececf1; --muted:#9a9aa7;
+           --line:#26262f; --green:#42dd8a; --red:#ff6157; --accent:#b39dff; --accentbg:#201b39; --chip:#1e1e27;
+           --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 28px rgba(0,0,0,.35);}
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);
-       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-       -webkit-font-smoothing:antialiased}
-  .wrap{max-width:1200px;margin:0 auto;padding:22px 18px 60px}
-  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px}
-  h1{font-size:1.5rem;font-weight:650;letter-spacing:-.02em;margin:0}
-  .sub{color:var(--muted);font-size:.82rem}
-  h2{font-size:1.02rem;font-weight:640;margin:26px 0 10px}
-  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(165px,1fr))}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:13px 15px}
-  .card .lab{font-size:.74rem;color:var(--muted);font-weight:500;display:flex;gap:5px;align-items:center}
-  .card .val{font-size:1.34rem;font-weight:660;margin-top:5px;letter-spacing:-.01em}
-  .card .hint{font-size:.74rem;color:var(--muted);margin-top:3px}
+  body{margin:0;background:
+        radial-gradient(1200px 500px at 80% -10%, var(--accentbg), transparent 60%),
+        var(--bg);color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1200px;margin:0 auto;padding:22px 18px 70px}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+  .brand{display:flex;align-items:center;gap:10px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(15,157,88,.16)}
+  h1{font-size:1.4rem;font-weight:680;letter-spacing:-.02em;margin:0}
+  .sub{color:var(--muted);font-size:.8rem}
+  h2{font-size:1.02rem;font-weight:650;margin:30px 0 11px;display:flex;align-items:center;gap:8px}
+  h2 .cnt{color:var(--muted);font-size:.8rem;font-weight:500}
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(158px,1fr))}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px 15px;box-shadow:var(--shadow)}
+  .card .lab{font-size:.73rem;color:var(--muted);font-weight:500;display:flex;gap:5px;align-items:center}
+  .card .val{font-size:1.32rem;font-weight:680;margin-top:5px;letter-spacing:-.01em}
+  .card .hint{font-size:.72rem;color:var(--muted);margin-top:3px}
   .pos{color:var(--green)} .neg{color:var(--red)}
+  /* hero */
+  .hero{background:linear-gradient(135deg,var(--card),var(--accentbg));border:1px solid var(--line);
+        border-radius:16px;padding:18px 20px;box-shadow:var(--shadow);margin-bottom:14px}
+  .hero .big{font-size:1.9rem;font-weight:730;letter-spacing:-.03em;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .hero .brk{color:var(--muted);font-size:.9rem;margin-top:8px}
+  .hero b{color:var(--ink)}
+  /* tables */
   table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);
-        border-radius:12px;overflow:hidden;font-size:.86rem}
+        border-radius:14px;overflow:hidden;font-size:.85rem;box-shadow:var(--shadow)}
   th,td{padding:9px 11px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
-  th{font-size:.72rem;color:var(--muted);font-weight:600;text-align:right;background:transparent}
+  th{font-size:.7rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em}
   th:first-child,td:first-child{text-align:left}
   tr:last-child td{border-bottom:none}
-  .tag{display:inline-block;padding:1px 7px;border-radius:20px;font-size:.74rem;font-weight:600}
-  .tl{background:rgba(15,157,88,.14);color:var(--green)} .ts{background:rgba(217,48,37,.14);color:var(--red)}
-  .bar{height:6px;border-radius:4px;background:var(--line);overflow:hidden;margin-top:6px}
-  .bar > i{display:block;height:100%}
+  tbody tr:hover{background:var(--bg2)}
+  .tag{display:inline-block;padding:1px 8px;border-radius:20px;font-size:.72rem;font-weight:600}
+  .tl{background:rgba(15,157,88,.15);color:var(--green)} .ts{background:rgba(224,69,58,.15);color:var(--red)}
+  a.sym{color:inherit;text-decoration:none;border-bottom:1px dotted var(--muted)}
+  a.sym:hover{color:var(--accent);border-bottom-color:var(--accent)}
+  .ext{color:var(--muted);text-decoration:none;font-size:.9em;margin-left:5px}
+  .ext:hover{color:var(--accent)}
+  /* movements */
+  .mv{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+  .mv .row{display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line)}
+  .mv .row:last-child{border-bottom:none}
+  .mv .row:hover{background:var(--bg2)}
+  .mv .ic{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:.9rem;flex:0 0 auto}
+  .mv .win{background:rgba(15,157,88,.15)} .mv .loss{background:rgba(224,69,58,.15)}
+  .mv .who{font-weight:600;flex:1 1 auto;min-width:0}
+  .mv .who .t{color:var(--muted);font-size:.74rem;font-weight:400}
+  .mv .amt{font-weight:680;font-variant-numeric:tabular-nums}
   .note{background:var(--accentbg);border:1px solid var(--line);border-left:3px solid var(--accent);
-        border-radius:8px;padding:11px 14px;font-size:.84rem;color:var(--ink);margin:14px 0}
+        border-radius:10px;padding:11px 14px;font-size:.83rem;color:var(--ink);margin:14px 0}
+  .verdict{border-radius:10px;padding:10px 14px;font-size:.84rem;margin-top:10px;border:1px solid var(--line)}
+  .vg{background:rgba(15,157,88,.1)} .vr{background:rgba(224,69,58,.1)} .vn{background:var(--chip)}
   button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--ink);
-         border-radius:8px;padding:7px 14px}
+         border-radius:9px;padding:7px 14px}
   button.primary{background:var(--accent);color:#fff;border-color:transparent;font-weight:600}
   #login{max-width:340px;margin:12vh auto;text-align:center}
-  input{font:inherit;width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:9px;
+  input{font:inherit;width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:10px;
         background:var(--card);color:var(--ink);margin:10px 0}
-  canvas{width:100%;height:120px;display:block;margin-top:8px}
+  canvas{width:100%;height:130px;display:block;margin-top:8px}
   .err{color:var(--red);font-size:.85rem;margin-top:8px}
   .dim{color:var(--muted)}
+  .toolbar{display:flex;gap:8px;align-items:center}
+  .scrollx{overflow-x:auto}
 </style>
 </head>
 <body>
@@ -65,43 +101,56 @@
 <!-- DASHBOARD -->
 <div class="wrap" id="app" style="display:none">
   <header>
-    <div>
-      <h1>Trading Bot</h1>
-      <div class="sub">Portafoglio testnet · vista live da Binance · <span id="updated" class="dim"></span></div>
+    <div class="brand">
+      <span class="dot"></span>
+      <div>
+        <h1>Trading Bot</h1>
+        <div class="sub">Portafoglio testnet · live da Binance · <span id="updated" class="dim"></span></div>
+      </div>
     </div>
-    <button onclick="logout()">Logout</button>
+    <div class="toolbar">
+      <button onclick="toggleTheme()" id="themebtn" title="Tema chiaro/scuro">🌓</button>
+      <button onclick="refresh(false)" title="Aggiorna adesso">↻</button>
+      <button onclick="logout()">Logout</button>
+    </div>
   </header>
 
   <div class="note">
-    Questa è la <b>vetrina finanziaria live</b>: soldi, posizioni e P&amp;L letti in diretta da Binance a ogni refresh.
-    Il bot vero (decisioni di Claude, WebSocket, ordini) gira 24/7 sulla VM Oracle — il ragionamento completo di Claude
-    è sulla dashboard Oracle (via tunnel SSH).
+    <b>Vetrina finanziaria live</b>: soldi, posizioni, P&amp;L e movimenti letti in diretta da Binance a ogni refresh.
+    Il bot vero (decisioni di Claude, WebSocket, ordini) gira 24/7 sulla VM Oracle; il suo ragionamento testuale è sulla dashboard Oracle.
+    Clicca il nome di una cripto o l'icona ↗ per vedere il prezzo live sul grafico.
   </div>
 
+  <div class="hero" id="hero"></div>
+
   <h2>💰 I soldi</h2>
-  <div id="summary" class="note" style="border-left-color:var(--green)"></div>
   <div class="grid" id="money"></div>
 
   <h2>🪙 Guadagno per crypto</h2>
-  <div class="sub" style="margin-bottom:8px"><b>Realizzato</b> = trade chiusi su quella crypto (incassato). <b>Non realizzato</b> = posizione ancora aperta (sulla carta). <b>Totale</b> = somma dei due. <b>% cap.</b> = totale ÷ capitale iniziale.</div>
-  <div style="overflow-x:auto"><table id="pertable"></table></div>
+  <div class="sub" style="margin-bottom:8px"><b>Realizzato</b> = trade chiusi (incassato). <b>Non realizzato</b> = posizione aperta (sulla carta). <b>Totale</b> = somma. <b>% cap.</b> = totale ÷ capitale iniziale. Clicca la cripto per il prezzo live.</div>
+  <div class="scrollx"><table id="pertable"></table></div>
 
   <h2>🎲 Bravura o fortuna?</h2>
   <div class="sub" style="margin-bottom:8px">Guadagnare in un mercato che sale non prova nulla: batti il semplice comprare-e-tenere BTC (<b>alpha</b>)? E quanto sei sceso dai massimi (<b>drawdown</b>)?</div>
   <div class="grid" id="quality"></div>
+  <div id="verdict"></div>
 
   <h2>📦 Quanto è investito adesso</h2>
   <div class="grid" id="exposure"></div>
 
   <h2 id="posTitle">📊 Portafoglio</h2>
-  <div style="overflow-x:auto"><table id="postable"></table></div>
+  <div class="scrollx"><table id="postable"></table></div>
+
+  <h2>🧾 Ultimi movimenti <span class="cnt" id="mvcnt"></span></h2>
+  <div class="sub" style="margin-bottom:8px">Le chiusure più recenti (take-profit 🎯 / stop 🛑), dalla più nuova. Clicca per il grafico live.</div>
+  <div class="mv" id="movements"></div>
 
   <h2>🧠 Track record di Claude (ultimi 7 giorni)</h2>
   <div class="sub" style="margin-bottom:10px">Gli stessi numeri che Claude legge di sé prima di decidere: se il win-rate è basso, riduce leva e bilancia il book.</div>
   <div class="grid" id="track"></div>
 
   <h2>📈 P&L realizzato cumulato</h2>
-  <div class="sub" style="margin-bottom:6px">Solo trade chiusi — soldi veri incassati/persi.</div>
+  <div class="sub" style="margin-bottom:6px">Solo trade chiusi — soldi veri incassati/persi, dal reset.</div>
   <div class="card"><canvas id="curve"></canvas></div>
 
   <div class="sub" style="margin-top:26px" id="footer"></div>
@@ -113,6 +162,25 @@ const eur = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString("it-IT",{minimumFra
 const eur0 = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString("it-IT",{maximumFractionDigits:0});
 const pct = n => (n>=0?"+":"")+n.toFixed(1)+"%";
 const cls = n => n>=0?"pos":"neg";
+const binance = base => `https://www.binance.com/en/futures/${base}USDT`;
+const tv = base => `https://www.tradingview.com/symbols/${base}USDT.P/?exchange=BINANCE`;
+const symLink = base => `<a class="sym" href="${binance(base)}" target="_blank" rel="noopener">${base}</a>`+
+                        `<a class="ext" href="${tv(base)}" target="_blank" rel="noopener" title="TradingView">↗</a>`;
+function ago(ts){
+  const s=(Date.now()-ts)/1000;
+  if(s<60) return "adesso";
+  if(s<3600) return Math.floor(s/60)+"m fa";
+  if(s<86400) return Math.floor(s/3600)+"h fa";
+  return Math.floor(s/86400)+"g fa";
+}
+
+function toggleTheme(){
+  const cur = document.documentElement.getAttribute("data-theme");
+  const next = cur==="dark" ? "light" : (cur==="light" ? "dark" : (matchMedia("(prefers-color-scheme: dark)").matches?"light":"dark"));
+  document.documentElement.setAttribute("data-theme", next);
+  try{ localStorage.setItem("theme", next); }catch(e){}
+}
+(function(){ try{ const t=localStorage.getItem("theme"); if(t) document.documentElement.setAttribute("data-theme",t);}catch(e){} })();
 
 function login(){
   const pw = $("#pw").value.trim();
@@ -129,37 +197,38 @@ function card(lab, val, hint, klass){
 }
 
 function render(d){
-  const m=d.money, e=d.exposure;
+  const m=d.money, e=d.exposure, c=d.costs||{};
 
-  // one-line summary: quanto ho guadagnato
+  // hero
   const verbo = m.pnl_total>=0 ? "guadagnato" : "perso";
-  $("#summary").innerHTML =
-    `<div style="font-size:1.2rem;font-weight:650">${m.pnl_total>=0?'🟢':'🔴'} Finora hai ${verbo} `+
-    `<span class="${cls(m.pnl_total)}">${eur(m.pnl_total)} (${pct(m.pnl_total_pct)})</span></div>`+
-    `<div class="dim" style="margin-top:4px">= <b>${eur(m.pnl_realized)}</b> già realizzati (in tasca) + `+
-    `<b>${eur(m.unrealized)}</b> sulla carta (posizioni aperte) · capitale iniziale ${eur(m.initial)}</div>`;
+  $("#hero").innerHTML =
+    `<div class="big">${m.pnl_total>=0?'🟢':'🔴'} Finora hai ${verbo} <span class="${cls(m.pnl_total)}">${eur(m.pnl_total)}</span>
+       <span class="${cls(m.pnl_total)}" style="font-size:1.1rem">(${pct(m.pnl_total_pct)})</span></div>
+     <div class="brk">= <b>${eur(m.pnl_realized)}</b> già realizzati (in tasca) &nbsp;+&nbsp; <b>${eur(m.unrealized)}</b> sulla carta (posizioni aperte)
+       &nbsp;·&nbsp; capitale iniziale ${eur(m.initial)}</div>`;
 
-  $("#money").innerHTML =
+  // money cards + costs + best/worst
+  let money =
     card("Capitale iniziale", eur(m.initial), "baseline dal reset 15/07") +
     card("Valore conto ORA", eur(m.equity), pct(m.pnl_total_pct)+" dall'inizio", cls(m.pnl_total)) +
-    card("P&L totale", eur(m.pnl_total), "cassa + carta", cls(m.pnl_total)) +
     card("↳ realizzato", eur(m.pnl_realized), "trade chiusi, soldi veri", cls(m.pnl_realized)) +
     card("↳ sulla carta", eur(m.unrealized), "posizioni aperte", cls(m.unrealized));
+  if(c.funding_total!==undefined)
+    money += card("💧 Funding pagato/incassato", eur(c.funding_total), "sui perpetui, dal reset", cls(c.funding_total));
+  if(c.commission_total!==undefined)
+    money += card("🧾 Commissioni", eur(c.commission_total), "costo di trading, dal reset", cls(c.commission_total));
+  if(d.best_pos)
+    money += card("🏆 Miglior posizione", d.best_pos.base+" "+eur(d.best_pos.upnl), pct(d.best_pos.roe*100)+" ROE", cls(d.best_pos.upnl));
+  if(d.worst_pos)
+    money += card("💀 Peggior posizione", d.worst_pos.base+" "+eur(d.worst_pos.upnl), pct(d.worst_pos.roe*100)+" ROE", cls(d.worst_pos.upnl));
+  $("#money").innerHTML = money;
 
-  const bias = e.total_exposure? (e.net_exp/e.total_exposure*100):0;
-  $("#exposure").innerHTML =
-    card("Margine impegnato", eur0(e.deployed_margin), e.deployed_pct.toFixed(0)+"% del conto") +
-    card("Disponibile", eur0(m.available), "liquidità libera") +
-    card("Esposizione totale", eur0(e.total_exposure), "leva media "+e.avg_leverage.toFixed(1)+"x") +
-    card("Long vs Short", e.n_long+"L / "+e.n_short+"S", eur0(e.long_exp)+" vs "+eur0(e.short_exp)) +
-    card("Esposizione netta", (e.net_exp>=0?"+":"")+eur0(e.net_exp), pct(bias).replace('%','%')+" "+(e.net_exp>=0?"long":"short")+" bias", cls(e.net_exp));
-
-  // per-crypto P&L
+  // per-crypto
   const ps = d.per_symbol || [];
   let pr = `<tr><th>Crypto</th><th>Stato</th><th>Realizzato</th><th>Non realizz.</th><th>Totale</th><th>% cap.</th></tr>`;
   for(const s of ps){
     pr += `<tr>
-      <td><b>${s.base}</b></td>
+      <td><b>${symLink(s.base)}</b></td>
       <td class="dim">${s.open?'🔵 aperta':'⚪ chiusa'}</td>
       <td class="${cls(s.realized)}">${eur(s.realized)}</td>
       <td class="${cls(s.unrealized)}">${eur(s.unrealized)}</td>
@@ -170,9 +239,9 @@ function render(d){
   if(!ps.length) pr += `<tr><td colspan="6" class="dim">Ancora nessun trade da mostrare.</td></tr>`;
   $("#pertable").innerHTML = pr;
 
-  // bravura o fortuna: alpha vs BTC + max drawdown
+  // bravura o fortuna
   const b=d.benchmark, rk=d.risk||{};
-  let q = "";
+  let q="";
   if(b){
     q += card("Rendimento strategia", pct(b.strat_ret_pct), "dal reset", cls(b.strat_ret_pct)) +
          card("BTC compra&tieni", pct(b.btc_ret_pct), "stessa finestra", cls(b.btc_ret_pct)) +
@@ -181,27 +250,57 @@ function render(d){
   if(rk.max_drawdown_pct!==undefined)
     q += card("Max drawdown", rk.max_drawdown_pct.toFixed(2)+"%", "realizzato, dai massimi", rk.max_drawdown_pct<0?"neg":"");
   $("#quality").innerHTML = q || `<div class="card dim">Dati insufficienti.</div>`;
+  if(b){
+    const a=b.alpha_pct;
+    const [vk,txt] = a>2 ? ["vg",`✅ Batti BTC di ${pct(a)}: c'è segnale di alpha — ma pochi giorni, serve conferma su settimane e su una fase ribassista.`]
+                  : a<-2 ? ["vr",`⚠️ Fai ${pct(a)} rispetto a BTC: in questa finestra tenerlo e non fare nulla avrebbe reso di più. È beta (marea), non bravura.`]
+                         : ["vn",`➖ Sostanzialmente in linea con BTC (${pct(a)}): finora è soprattutto il mercato. Il verdetto vero arriva quando BTC scende.`];
+    $("#verdict").innerHTML = `<div class="verdict ${vk}">${txt}</div>`;
+  } else $("#verdict").innerHTML="";
+
+  // exposure
+  const bias = e.total_exposure? (e.net_exp/e.total_exposure*100):0;
+  $("#exposure").innerHTML =
+    card("Margine impegnato", eur0(e.deployed_margin), e.deployed_pct.toFixed(0)+"% del conto") +
+    card("Disponibile", eur0(m.available), "liquidità libera") +
+    card("Esposizione totale", eur0(e.total_exposure), "leva media "+e.avg_leverage.toFixed(1)+"x") +
+    card("Long vs Short", e.n_long+"L / "+e.n_short+"S", eur0(e.long_exp)+" vs "+eur0(e.short_exp)) +
+    card("Esposizione netta", (e.net_exp>=0?"+":"")+eur0(e.net_exp), pct(bias)+" "+(e.net_exp>=0?"long":"short")+" bias", cls(e.net_exp));
 
   // positions
-  $("#posTitle").innerHTML = `📊 Portafoglio — ${d.positions.length} posizioni <span class="dim" style="font-size:.8rem;font-weight:400">(mandato min ${d.mandate.min} · target ${d.mandate.target})</span>`;
-  let rows = `<tr><th>Crypto</th><th>Dir.</th><th>Leva</th><th>Margine</th><th>% book</th>
-    <th>Apertura</th><th>Ora</th><th>P&L $</th><th>ROE</th></tr>`;
+  $("#posTitle").innerHTML = `📊 Portafoglio <span class="cnt">— ${d.positions.length} posizioni (mandato min ${d.mandate.min} · target ${d.mandate.target})</span>`;
+  let rows = `<tr><th>Crypto</th><th>Dir.</th><th>Leva</th><th>Margine</th><th>% book</th><th>Apertura</th><th>Ora</th><th>P&L $</th><th>ROE</th></tr>`;
   for(const p of d.positions){
     const w = e.deployed_margin? (p.margin/e.deployed_margin*100):0;
     rows += `<tr>
-      <td><b>${p.base}</b>${p.anchor?' <span class="dim">⚓</span>':''}</td>
+      <td><b>${symLink(p.base)}</b>${p.anchor?' <span class="dim" title="large-cap">⚓</span>':''}</td>
       <td><span class="tag ${p.side==='LONG'?'tl':'ts'}">${p.side==='LONG'?'Long':'Short'}</span></td>
       <td>${p.leverage}x</td>
       <td>${eur0(p.margin)}</td>
       <td>${w.toFixed(0)}%</td>
       <td class="dim">$${p.entry.toLocaleString("it-IT",{maximumFractionDigits:4})}</td>
       <td>$${p.mark.toLocaleString("it-IT",{maximumFractionDigits:4})}</td>
-      <td class="${cls(p.upnl)}">${(p.upnl>=0?"+":"")+eur(p.upnl).replace('$','$')}</td>
+      <td class="${cls(p.upnl)}">${eur(p.upnl)}</td>
       <td class="${cls(p.roe)}">${pct(p.roe*100)}</td>
     </tr>`;
   }
-  if(!d.positions.length) rows += `<tr><td colspan="9" class="dim">Nessuna posizione — il mandato le riaprirà al prossimo ciclo.</td></tr>`;
+  if(!d.positions.length) rows += `<tr><td colspan="9" class="dim">Nessuna posizione aperta — il mandato le riaprirà (serve Claude attivo).</td></tr>`;
   $("#postable").innerHTML = rows;
+
+  // movements
+  const mv = d.movements || [];
+  $("#mvcnt").textContent = mv.length? `— ultime ${mv.length} chiusure` : "";
+  let mh = "";
+  for(const x of mv){
+    const win = x.amount>=0;
+    mh += `<div class="row">
+      <div class="ic ${win?'win':'loss'}">${win?'🎯':'🛑'}</div>
+      <div class="who">${symLink(x.base)} <span class="dim">chiusa</span><br><span class="t">${ago(x.ts)}</span></div>
+      <div class="amt ${cls(x.amount)}">${eur(x.amount)}</div>
+    </div>`;
+  }
+  if(!mv.length) mh = `<div class="row dim">Nessuna chiusura registrata ancora.</div>`;
+  $("#movements").innerHTML = mh;
 
   // track record
   const t=d.track;
@@ -221,18 +320,24 @@ function render(d){
 
 function drawCurve(pts){
   const c=$("#curve"), dpr=window.devicePixelRatio||1;
-  const W=c.clientWidth, H=120; c.width=W*dpr; c.height=H*dpr;
+  const W=c.clientWidth, H=130; c.width=W*dpr; c.height=H*dpr;
   const x=c.getContext("2d"); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
   if(!pts||pts.length<2) return;
   const ys=pts.map(p=>p[1]), min=Math.min(...ys,0), max=Math.max(...ys,0), range=(max-min)||1;
   const px=i=>i/(pts.length-1)*(W-8)+4, py=v=>H-6-((v-min)/range)*(H-16);
-  // zero line
-  x.strokeStyle=getComputedStyle(document.body).getPropertyValue("--line"); x.lineWidth=1;
-  x.beginPath(); x.moveTo(0,py(0)); x.lineTo(W,py(0)); x.stroke();
+  const g=getComputedStyle(document.body);
   const last=ys[ys.length-1];
-  x.strokeStyle=last>=0?getComputedStyle(document.body).getPropertyValue("--green")
-                       :getComputedStyle(document.body).getPropertyValue("--red");
-  x.lineWidth=1.8; x.beginPath();
+  const col = last>=0? g.getPropertyValue("--green") : g.getPropertyValue("--red");
+  // area fill
+  x.beginPath(); x.moveTo(px(0),py(pts[0][1]));
+  pts.forEach((p,i)=>x.lineTo(px(i),py(p[1])));
+  x.lineTo(px(pts.length-1),py(0)); x.lineTo(px(0),py(0)); x.closePath();
+  x.fillStyle = col+"22"; x.fill();
+  // zero line
+  x.strokeStyle=g.getPropertyValue("--line"); x.lineWidth=1;
+  x.beginPath(); x.moveTo(0,py(0)); x.lineTo(W,py(0)); x.stroke();
+  // line
+  x.strokeStyle=col; x.lineWidth=1.9; x.beginPath();
   pts.forEach((p,i)=>{ i?x.lineTo(px(i),py(p[1])):x.moveTo(px(i),py(p[1])); }); x.stroke();
 }
 

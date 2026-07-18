@@ -58,6 +58,10 @@ def build_state() -> dict:
     income_all = _get("/fapi/v1/income",
                       {"incomeType": "REALIZED_PNL", "limit": 1000}, signed=True)
     income = [r for r in income_all if int(r.get("time", 0)) >= reset_ms]
+    # Broader ledger (all types: realized P&L, funding, commissions, transfers)
+    # for the "recent movements" feed and the fee/funding tallies.
+    ledger_all = _get("/fapi/v1/income", {"limit": 1000}, signed=True)
+    ledger = [r for r in ledger_all if int(r.get("time", 0)) >= reset_ms]
 
     equity = float(account["totalMarginBalance"])
     wallet = float(account["totalWalletBalance"])
@@ -192,6 +196,33 @@ def build_state() -> dict:
     except Exception:
         benchmark = None
 
+    # --- recent movements feed = the meaningful events (position closes, i.e.
+    # realized P&L). Commissions/funding are noise here and live in the tallies
+    # below. Opens aren't in income history (Vercel has no journal), so the feed
+    # is the realized outcomes: "🎯 ESPORTS +$231" / "🛑 XRP −$52". ---
+    movements = []
+    for r in sorted(income, key=lambda r: int(r.get("time", 0)), reverse=True)[:30]:
+        amt = round(float(r.get("income", 0)), 2)
+        movements.append({
+            "kind": "win" if amt >= 0 else "loss",
+            "symbol": r.get("symbol", ""),
+            "base": (r.get("symbol", "") or "").replace("USDT", ""),
+            "amount": amt,
+            "ts": int(r.get("time", 0)),
+        })
+
+    # --- fee/funding tallies since reset (within the 1000-row ledger window) ---
+    funding_total = sum(float(r["income"]) for r in ledger if r.get("incomeType") == "FUNDING_FEE")
+    commission_total = sum(float(r["income"]) for r in ledger if r.get("incomeType") == "COMMISSION")
+
+    # --- best / worst open position (by unrealized P&L) ---
+    best_pos = worst_pos = None
+    if positions:
+        bp = max(positions, key=lambda p: p["upnl"])
+        wp = min(positions, key=lambda p: p["upnl"])
+        best_pos = {"base": bp["base"], "upnl": bp["upnl"], "roe": bp["roe"]}
+        worst_pos = {"base": wp["base"], "upnl": wp["upnl"], "roe": wp["roe"]}
+
     pnl_total = equity - initial
     return {
         "ts": now_ms,
@@ -221,6 +252,13 @@ def build_state() -> dict:
         "track": track,
         "benchmark": benchmark,
         "risk": {"max_drawdown_pct": round(max_dd, 2)},
+        "costs": {
+            "funding_total": round(funding_total, 2),
+            "commission_total": round(commission_total, 2),
+        },
+        "best_pos": best_pos,
+        "worst_pos": worst_pos,
+        "movements": movements,
         "realized_curve": cum[-500:],
         "mandate": {"min": 10, "target": 12},
     }
