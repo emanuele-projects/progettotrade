@@ -34,13 +34,26 @@ vetrina di sola lettura.
   401 senza). Vercel è sempre HTTPS.
 - La funzione è **sola lettura**: interroga il conto, non piazza né chiude ordini.
 
-## Cosa mostra (e cosa no)
+## Cosa mostra
 
-✅ Soldi (capitale iniziale, valore ora, P&L realizzato vs sulla carta) ·
-esposizione e leva media · bilancia long/short · tabella posizioni con ROE ·
-track record 7 giorni (win-rate, profit factor) · curva P&L realizzato.
+✅ Insight ordinati (chi paga, chi costa, concentrazione, costi, striscia) ·
+soldi (P&L realizzato vs sulla carta, funding, commissioni) · guadagno per
+crypto con statistiche trade (ordinabile/filtrabile) · grafico temporale
+multi-cripto (P&L cumulato per moneta) · alpha vs BTC + drawdown · posizioni
+(ordinabile) · ultimi movimenti · track record 7 giorni · curva P&L.
 
-➖ Il **ragionamento testuale di Claude** (market view, motivazioni per crypto,
-costi delle chiamate) sta nel journal SQLite sulla VM, non su Binance: quello
-resta sulla dashboard Oracle completa (tunnel SSH). Questa vetrina Vercel copre
-tutta la parte finanziaria live.
+🧠 **La testa di Claude** (market view, ragionamenti per crypto, lezioni della
+memoria, equity con marker delle decisioni) arriva dal journal della VM tramite
+uno snapshot JSON. Setup una tantum:
+
+1. Vercel dashboard → **Storage → Create → Blob** (piano hobby ok).
+2. Copia il token `BLOB_READ_WRITE_TOKEN` nel **`.env` della VM Oracle**
+   e riavvia il servizio (`sudo systemctl restart tradingbot`).
+3. Entro ~1 minuto il bot carica lo snapshot e logga la riga
+   `snapshot uploaded — set SNAPSHOT_URL on Vercel to: https://…` nel bot.log.
+   Copia quell'URL nelle env del progetto Vercel come `SNAPSHOT_URL` e redeploy.
+
+Senza questi passi la dashboard funziona lo stesso: mostra tutto tranne la
+sezione dei ragionamenti (al suo posto c'è un promemoria con le istruzioni).
+Lo snapshot si aggiorna ogni 5 minuti; l'URL del blob è oscuro ma tecnicamente
+pubblico — contiene solo commenti di mercato del bot testnet, nessuna chiave.

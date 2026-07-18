@@ -171,6 +171,14 @@ class Config:
     REFLECT_MAX_TOKENS: int = 1200       # the reflection output is a short list
     REFLECT_DECISIONS_SAMPLE: int = 12   # recent market views fed to the reflection
 
+    # ---- Public snapshot export (Vercel dashboard "Claude's brain" section) ----
+    # Every few minutes the bot writes data/snapshot.json (decisions+reasoning,
+    # lessons, equity curve) and, if BLOB_READ_WRITE_TOKEN is in .env, uploads
+    # it to Vercel Blob so the public dashboard can show it. See snapshot_export.py.
+    SNAPSHOT_EXPORT_ENABLED: bool = True
+    SNAPSHOT_EXPORT_INTERVAL_SECONDS: int = 300
+    SNAPSHOT_BLOB_PATH: str = "trading/snapshot.json"
+
     # ---- Emergency rail (instrumentation, not strategy block) ----
     EQUITY_FLOOR_PCT: float = 0.20  # auto-halt if equity < 20% of initial
 

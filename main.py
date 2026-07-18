@@ -27,6 +27,7 @@ import performance
 import risk_engine
 import scanner
 import shadow
+import snapshot_export
 import strategy
 import stream
 
@@ -528,6 +529,8 @@ def main() -> None:
         next_reflect = time.monotonic() + 600  # first reflection ~10 min in
     else:
         next_reflect = time.monotonic() + max(0.0, CFG.REFLECT_INTERVAL_SECONDS - _reflect_age)
+    # Public snapshot for the Vercel dashboard: first upload ~1 min after start.
+    next_snapshot = time.monotonic() + 60 if CFG.SNAPSHOT_EXPORT_ENABLED else float("inf")
     soft_logged = False
     try:
         while True:
@@ -550,6 +553,12 @@ def main() -> None:
                 log.info("KILL_SWITCH removed — trading resumed.")
                 journal.log_event("RESUME", "kill switch removed")
                 soft_logged = False
+
+            # Public snapshot (Vercel dashboard): journal → JSON → Blob. Cheap,
+            # local-first, never raises.
+            if time.monotonic() >= next_snapshot:
+                snapshot_export.export(log)
+                next_snapshot = time.monotonic() + CFG.SNAPSHOT_EXPORT_INTERVAL_SECONDS
 
             # Daily reflection: re-read own trades+outcomes → rewrite the durable
             # lesson set. One cheap call/day; never raises (best-effort memory).

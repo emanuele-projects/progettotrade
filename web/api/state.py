@@ -62,6 +62,8 @@ def build_state() -> dict:
     # for the "recent movements" feed and the fee/funding tallies.
     ledger_all = _get("/fapi/v1/income", {"limit": 1000}, signed=True)
     ledger = [r for r in ledger_all if int(r.get("time", 0)) >= reset_ms]
+    funding_total = sum(float(r["income"]) for r in ledger if r.get("incomeType") == "FUNDING_FEE")
+    commission_total = sum(float(r["income"]) for r in ledger if r.get("incomeType") == "COMMISSION")
 
     equity = float(account["totalMarginBalance"])
     wallet = float(account["totalWalletBalance"])
@@ -139,15 +141,19 @@ def build_state() -> dict:
         running += v
         cum.append([t, round(running, 2)])
 
-    # --- per-symbol P&L (realized all-time from the reset + unrealized open) ---
-    realized_by_sym: dict[str, float] = {}
-    for r in income:
+    # --- per-symbol P&L + trade stats (realized since reset + unrealized open) ---
+    events_by_sym: dict[str, list] = {}
+    for r in sorted(income, key=lambda r: int(r.get("time", 0))):
         s = r.get("symbol", "")
         if s:
-            realized_by_sym[s] = realized_by_sym.get(s, 0.0) + float(r["income"])
+            events_by_sym.setdefault(s, []).append((int(r["time"]), float(r["income"])))
+    realized_by_sym = {s: sum(v for _, v in evs) for s, evs in events_by_sym.items()}
     unreal_by_sym = {p["symbol"]: p["upnl"] for p in positions}
     per_symbol = []
     for s in set(realized_by_sym) | set(unreal_by_sym):
+        evs = events_by_sym.get(s, [])
+        w = [v for _, v in evs if v > 0]
+        l = [v for _, v in evs if v < 0]
         rz = realized_by_sym.get(s, 0.0)
         uz = unreal_by_sym.get(s, 0.0)
         tot = rz + uz
@@ -158,8 +164,84 @@ def build_state() -> dict:
             "total": round(tot, 2),
             "pct": (tot / initial * 100) if initial else 0.0,
             "open": s in unreal_by_sym,
+            "n": len(evs), "wins": len(w), "losses": len(l),
+            "win_rate": (len(w) / len(evs) * 100) if evs else None,
+            "best": round(max((v for _, v in evs), default=0.0), 2),
+            "worst": round(min((v for _, v in evs), default=0.0), 2),
+            "last_ts": evs[-1][0] if evs else None,
         })
     per_symbol.sort(key=lambda x: -x["total"])
+
+    # --- per-symbol cumulative realized curves (top 8 by |total|): the time-axis
+    # view that correlates each crypto as an investment over the run ---
+    curves = []
+    for s in sorted((x for x in per_symbol if x["n"] > 0),
+                    key=lambda x: -abs(x["total"]))[:8]:
+        sym = s["base"] + "USDT"
+        run, pts = 0.0, [[reset_ms, 0.0]]
+        for t, v in events_by_sym.get(sym, []):
+            run += v
+            pts.append([t, round(run, 2)])
+        curves.append({"base": s["base"], "points": pts})
+
+    # --- computed insights, ordered by importance ---
+    insights = []
+    def _ins(icon, title, text): insights.append({"icon": icon, "title": title, "text": text})
+    top3 = [s for s in per_symbol if s["total"] > 0][:3]
+    if top3:
+        _ins("🏆", "Chi ti sta pagando",
+             " · ".join(f"{s['base']} +${s['total']:.0f} ({s['pct']:+.1f}% del capitale)" for s in top3))
+    bot3 = sorted((s for s in per_symbol if s["total"] < 0), key=lambda s: s["total"])[:3]
+    if bot3:
+        _ins("🔻", "Chi ti sta costando",
+             " · ".join(f"{s['base']} −${abs(s['total']):.0f}" for s in bot3))
+    if income:
+        ev = sorted(((int(r["time"]), float(r["income"]), (r.get("symbol", "") or "").replace("USDT", ""))
+                     for r in income), key=lambda x: x[1])
+        _ins("🎯", "Colpo migliore", f"{ev[-1][2]} +${ev[-1][1]:.0f} in un singolo trade")
+        _ins("💥", "Perdita peggiore", f"{ev[0][2]} −${abs(ev[0][1]):.0f} in un singolo trade")
+    mt = max(per_symbol, key=lambda s: s["n"], default=None)
+    if mt and mt["n"] >= 3:
+        _ins("📊", "Dove insisti di più",
+             f"{mt['base']}: {mt['n']} trade chiusi (win-rate {mt['win_rate']:.0f}%), "
+             f"netto ${mt['total']:+.0f} — {'e ti paga' if mt['total'] > 0 else 'ma finora ci perdi'}")
+    wins_all = sorted((float(r["income"]) for r in income if float(r["income"]) > 0), reverse=True)
+    if len(wins_all) >= 3:
+        share = sum(wins_all[:2]) / sum(wins_all) * 100
+        _ins("🧮", "Concentrazione dei profitti",
+             f"I 2 trade migliori valgono il {share:.0f}% di tutte le vincite"
+             + (" — campione ancora fragile" if share > 60 else " — profitto ben distribuito"))
+    gross_wins = sum(wins_all) if wins_all else 0.0
+    drag = abs(commission_total) + abs(min(funding_total, 0.0))
+    if gross_wins > 0 and drag > 0:
+        _ins("💸", "Attrito dei costi",
+             f"Commissioni ${abs(commission_total):.0f} + funding ${abs(funding_total):.0f} "
+             f"= ~{drag / gross_wins * 100:.0f}% del lordo vinto se ne va in costi")
+    seq = [float(r["income"]) for r in sorted(income, key=lambda r: int(r.get("time", 0)))]
+    if seq:
+        k = 1
+        for a, b in zip(seq[::-1], seq[::-1][1:]):
+            if (a >= 0) == (b >= 0): k += 1
+            else: break
+        _ins("🔁", "Striscia attuale", f"{k} {'vincite' if seq[-1] >= 0 else 'perdite'} di fila")
+    if positions:
+        big = max(positions, key=lambda p: p["exposure"])
+        _ins("⚖️", "Assetto adesso",
+             f"{n_long} long / {n_short} short · posizione più esposta {big['base']} "
+             f"(${big['exposure']:.0f}, {big['leverage']}x)")
+
+    # --- Claude's brain (reasoning, lessons, equity curve) from the VM snapshot.
+    # The journal lives on the Oracle VM; the bot uploads a JSON snapshot to
+    # Vercel Blob and SNAPSHOT_URL points at it. Absent env → section omitted. ---
+    claude = None
+    snapshot_url = os.environ.get("SNAPSHOT_URL", "")
+    if snapshot_url:
+        try:
+            req = urllib.request.Request(snapshot_url, headers={"Cache-Control": "no-cache"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                claude = json.loads(r.read().decode())
+        except Exception:
+            claude = None
 
     # --- max drawdown on the REALIZED equity curve (initial + cumulative realized) ---
     # No equity snapshots on Vercel (those live in the VM journal), so this is the
@@ -211,10 +293,6 @@ def build_state() -> dict:
             "ts": int(r.get("time", 0)),
         })
 
-    # --- fee/funding tallies since reset (within the 1000-row ledger window) ---
-    funding_total = sum(float(r["income"]) for r in ledger if r.get("incomeType") == "FUNDING_FEE")
-    commission_total = sum(float(r["income"]) for r in ledger if r.get("incomeType") == "COMMISSION")
-
     # --- best / worst open position (by unrealized P&L) ---
     best_pos = worst_pos = None
     if positions:
@@ -259,6 +337,9 @@ def build_state() -> dict:
         "best_pos": best_pos,
         "worst_pos": worst_pos,
         "movements": movements,
+        "per_symbol_curves": curves,
+        "insights": insights,
+        "claude": claude,
         "realized_curve": cum[-500:],
         "mandate": {"min": 10, "target": 12},
     }

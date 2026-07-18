@@ -23,34 +23,37 @@
            --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 28px rgba(0,0,0,.35);}
   *{box-sizing:border-box}
   body{margin:0;background:
-        radial-gradient(1200px 500px at 80% -10%, var(--accentbg), transparent 60%),
-        var(--bg);color:var(--ink);
-       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+        radial-gradient(1200px 500px at 80% -10%, var(--accentbg), transparent 60%), var(--bg);
+       color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
   .wrap{max-width:1200px;margin:0 auto;padding:22px 18px 70px}
   header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
   .brand{display:flex;align-items:center;gap:10px}
   .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(15,157,88,.16)}
   h1{font-size:1.4rem;font-weight:680;letter-spacing:-.02em;margin:0}
   .sub{color:var(--muted);font-size:.8rem}
-  h2{font-size:1.02rem;font-weight:650;margin:30px 0 11px;display:flex;align-items:center;gap:8px}
+  h2{font-size:1.02rem;font-weight:650;margin:30px 0 11px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   h2 .cnt{color:var(--muted);font-size:.8rem;font-weight:500}
   .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(158px,1fr))}
+  .igrid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px 15px;box-shadow:var(--shadow)}
-  .card .lab{font-size:.73rem;color:var(--muted);font-weight:500;display:flex;gap:5px;align-items:center}
+  .card .lab{font-size:.73rem;color:var(--muted);font-weight:500}
   .card .val{font-size:1.32rem;font-weight:680;margin-top:5px;letter-spacing:-.01em}
   .card .hint{font-size:.72rem;color:var(--muted);margin-top:3px}
+  .ins{display:flex;gap:11px;align-items:flex-start}
+  .ins .ico{font-size:1.25rem;line-height:1.3}
+  .ins .tt{font-weight:650;font-size:.85rem}
+  .ins .tx{font-size:.82rem;color:var(--muted);margin-top:2px}
   .pos{color:var(--green)} .neg{color:var(--red)}
-  /* hero */
   .hero{background:linear-gradient(135deg,var(--card),var(--accentbg));border:1px solid var(--line);
         border-radius:16px;padding:18px 20px;box-shadow:var(--shadow);margin-bottom:14px}
   .hero .big{font-size:1.9rem;font-weight:730;letter-spacing:-.03em;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   .hero .brk{color:var(--muted);font-size:.9rem;margin-top:8px}
   .hero b{color:var(--ink)}
-  /* tables */
   table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);
         border-radius:14px;overflow:hidden;font-size:.85rem;box-shadow:var(--shadow)}
   th,td{padding:9px 11px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
-  th{font-size:.7rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+  th{font-size:.7rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em;cursor:pointer;user-select:none}
+  th:hover{color:var(--accent)}
   th:first-child,td:first-child{text-align:left}
   tr:last-child td{border-bottom:none}
   tbody tr:hover{background:var(--bg2)}
@@ -60,7 +63,6 @@
   a.sym:hover{color:var(--accent);border-bottom-color:var(--accent)}
   .ext{color:var(--muted);text-decoration:none;font-size:.9em;margin-left:5px}
   .ext:hover{color:var(--accent)}
-  /* movements */
   .mv{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
   .mv .row{display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line)}
   .mv .row:last-child{border-bottom:none}
@@ -71,25 +73,43 @@
   .mv .who .t{color:var(--muted);font-size:.74rem;font-weight:400}
   .mv .amt{font-weight:680;font-variant-numeric:tabular-nums}
   .note{background:var(--accentbg);border:1px solid var(--line);border-left:3px solid var(--accent);
-        border-radius:10px;padding:11px 14px;font-size:.83rem;color:var(--ink);margin:14px 0}
+        border-radius:10px;padding:11px 14px;font-size:.83rem;margin:14px 0}
   .verdict{border-radius:10px;padding:10px 14px;font-size:.84rem;margin-top:10px;border:1px solid var(--line)}
   .vg{background:rgba(15,157,88,.1)} .vr{background:rgba(224,69,58,.1)} .vn{background:var(--chip)}
-  button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--ink);
-         border-radius:9px;padding:7px 14px}
+  details{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:8px 0;box-shadow:var(--shadow)}
+  summary{padding:11px 14px;cursor:pointer;font-size:.86rem;font-weight:600;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary:hover{color:var(--accent)}
+  .dbody{padding:4px 14px 12px;border-top:1px solid var(--line)}
+  .drow{padding:9px 0;border-bottom:1px dashed var(--line);font-size:.84rem}
+  .drow:last-child{border-bottom:none}
+  .drow .rs{color:var(--muted);font-size:.8rem;margin-top:3px;white-space:normal}
+  .chip{display:inline-block;background:var(--chip);border:1px solid var(--line);border-radius:20px;
+        padding:3px 11px;font-size:.78rem;margin:3px 4px 3px 0}
+  .lesson{border-left:3px solid var(--green);background:var(--card);border-radius:8px;
+          padding:8px 12px;margin:6px 0;font-size:.83rem;box-shadow:var(--shadow)}
+  .lesson .sc{font-size:.7rem;color:var(--muted)}
+  button,select,input.f{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);
+         color:var(--ink);border-radius:9px;padding:7px 12px}
+  input.f{cursor:text;width:170px}
   button.primary{background:var(--accent);color:#fff;border-color:transparent;font-weight:600}
   #login{max-width:340px;margin:12vh auto;text-align:center}
-  input{font:inherit;width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:10px;
+  #login input{font:inherit;width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:10px;
         background:var(--card);color:var(--ink);margin:10px 0}
-  canvas{width:100%;height:130px;display:block;margin-top:8px}
+  canvas{width:100%;display:block;margin-top:8px}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:9px;font-size:.78rem}
+  .legend span{display:flex;align-items:center;gap:5px;cursor:pointer;opacity:1}
+  .legend span.off{opacity:.35;text-decoration:line-through}
+  .legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
   .err{color:var(--red);font-size:.85rem;margin-top:8px}
   .dim{color:var(--muted)}
   .toolbar{display:flex;gap:8px;align-items:center}
+  .filters{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
   .scrollx{overflow-x:auto}
 </style>
 </head>
 <body>
 
-<!-- LOGIN -->
 <div id="login">
   <h1>🔒 Trading Bot</h1>
   <p class="sub">Inserisci la password per vedere la dashboard.</p>
@@ -98,7 +118,6 @@
   <div id="loginerr" class="err"></div>
 </div>
 
-<!-- DASHBOARD -->
 <div class="wrap" id="app" style="display:none">
   <header>
     <div class="brand">
@@ -109,29 +128,37 @@
       </div>
     </div>
     <div class="toolbar">
-      <button onclick="toggleTheme()" id="themebtn" title="Tema chiaro/scuro">🌓</button>
+      <button onclick="toggleTheme()" title="Tema chiaro/scuro">🌓</button>
       <button onclick="refresh(false)" title="Aggiorna adesso">↻</button>
       <button onclick="logout()">Logout</button>
     </div>
   </header>
 
-  <div class="note">
-    <b>Vetrina finanziaria live</b>: soldi, posizioni, P&amp;L e movimenti letti in diretta da Binance a ogni refresh.
-    Il bot vero (decisioni di Claude, WebSocket, ordini) gira 24/7 sulla VM Oracle; il suo ragionamento testuale è sulla dashboard Oracle.
-    Clicca il nome di una cripto o l'icona ↗ per vedere il prezzo live sul grafico.
-  </div>
-
   <div class="hero" id="hero"></div>
+
+  <h2>💡 Insight <span class="cnt">— cosa dicono i numeri, in ordine di importanza</span></h2>
+  <div class="igrid" id="insights"></div>
 
   <h2>💰 I soldi</h2>
   <div class="grid" id="money"></div>
 
-  <h2>🪙 Guadagno per crypto</h2>
-  <div class="sub" style="margin-bottom:8px"><b>Realizzato</b> = trade chiusi (incassato). <b>Non realizzato</b> = posizione aperta (sulla carta). <b>Totale</b> = somma. <b>% cap.</b> = totale ÷ capitale iniziale. Clicca la cripto per il prezzo live.</div>
+  <h2>🧠 La testa di Claude <span class="cnt" id="claudeAge"></span></h2>
+  <div id="claude"></div>
+
+  <h2>📈 Le tue cripto nel tempo <span class="cnt">— P&L realizzato cumulato per cripto, dal reset</span></h2>
+  <div class="sub" style="margin-bottom:8px">Ogni linea è una cripto: come ha contribuito al tuo risultato nel tempo. Clicca la legenda per nascondere/mostrare una linea e confrontarle.</div>
+  <div class="card"><canvas id="multichart" height="240"></canvas><div class="legend" id="mlegend"></div></div>
+
+  <h2>🪙 Guadagno per crypto <span class="cnt">— clicca le intestazioni per ordinare</span></h2>
+  <div class="filters">
+    <input class="f" id="perFilter" placeholder="🔍 filtra cripto…" oninput="renderPer()">
+    <select id="perState" onchange="renderPer()">
+      <option value="all">Tutte</option><option value="open">Solo aperte</option><option value="closed">Solo chiuse</option>
+    </select>
+  </div>
   <div class="scrollx"><table id="pertable"></table></div>
 
   <h2>🎲 Bravura o fortuna?</h2>
-  <div class="sub" style="margin-bottom:8px">Guadagnare in un mercato che sale non prova nulla: batti il semplice comprare-e-tenere BTC (<b>alpha</b>)? E quanto sei sceso dai massimi (<b>drawdown</b>)?</div>
   <div class="grid" id="quality"></div>
   <div id="verdict"></div>
 
@@ -139,224 +166,346 @@
   <div class="grid" id="exposure"></div>
 
   <h2 id="posTitle">📊 Portafoglio</h2>
+  <div class="filters">
+    <select id="posSide" onchange="renderPos()">
+      <option value="all">Long + Short</option><option value="LONG">Solo Long</option><option value="SHORT">Solo Short</option>
+    </select>
+  </div>
   <div class="scrollx"><table id="postable"></table></div>
 
   <h2>🧾 Ultimi movimenti <span class="cnt" id="mvcnt"></span></h2>
-  <div class="sub" style="margin-bottom:8px">Le chiusure più recenti (take-profit 🎯 / stop 🛑), dalla più nuova. Clicca per il grafico live.</div>
   <div class="mv" id="movements"></div>
 
-  <h2>🧠 Track record di Claude (ultimi 7 giorni)</h2>
-  <div class="sub" style="margin-bottom:10px">Gli stessi numeri che Claude legge di sé prima di decidere: se il win-rate è basso, riduce leva e bilancia il book.</div>
+  <h2>📉 Track record (ultimi 7 giorni)</h2>
   <div class="grid" id="track"></div>
 
-  <h2>📈 P&L realizzato cumulato</h2>
-  <div class="sub" style="margin-bottom:6px">Solo trade chiusi — soldi veri incassati/persi, dal reset.</div>
-  <div class="card"><canvas id="curve"></canvas></div>
+  <h2>📈 P&L realizzato totale</h2>
+  <div class="card"><canvas id="curve" height="130"></canvas></div>
 
   <div class="sub" style="margin-top:26px" id="footer"></div>
 </div>
 
 <script>
 const $ = s => document.querySelector(s);
+let D = null;                      // latest payload
+const sortState = { per:{k:"total",d:-1}, pos:{k:"upnl",d:-1} };
+const hiddenSeries = new Set();
+const PALETTE = ["#7c4dff","#0f9d58","#e0453a","#f4a825","#00acc1","#ab47bc","#5c6bc0","#8d6e63"];
+
 const eur = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString("it-IT",{minimumFractionDigits:2,maximumFractionDigits:2});
 const eur0 = n => (n<0?"-":"")+"$"+Math.abs(n).toLocaleString("it-IT",{maximumFractionDigits:0});
 const pct = n => (n>=0?"+":"")+n.toFixed(1)+"%";
 const cls = n => n>=0?"pos":"neg";
-const binance = base => `https://www.binance.com/en/futures/${base}USDT`;
-const tv = base => `https://www.tradingview.com/symbols/${base}USDT.P/?exchange=BINANCE`;
-const symLink = base => `<a class="sym" href="${binance(base)}" target="_blank" rel="noopener">${base}</a>`+
-                        `<a class="ext" href="${tv(base)}" target="_blank" rel="noopener" title="TradingView">↗</a>`;
-function ago(ts){
-  const s=(Date.now()-ts)/1000;
-  if(s<60) return "adesso";
-  if(s<3600) return Math.floor(s/60)+"m fa";
-  if(s<86400) return Math.floor(s/3600)+"h fa";
-  return Math.floor(s/86400)+"g fa";
-}
+const binance = b => `https://www.binance.com/en/futures/${b}USDT`;
+const tv = b => `https://www.tradingview.com/symbols/${b}USDT.P/?exchange=BINANCE`;
+const symLink = b => `<a class="sym" href="${binance(b)}" target="_blank" rel="noopener">${b}</a>`+
+                     `<a class="ext" href="${tv(b)}" target="_blank" rel="noopener" title="TradingView">↗</a>`;
+const ago = ts => { const s=(Date.now()-ts)/1000;
+  return s<60?"adesso":s<3600?Math.floor(s/60)+"m fa":s<86400?Math.floor(s/3600)+"h fa":Math.floor(s/86400)+"g fa"; };
+const fmtTs = iso => { const d=new Date(iso); return d.toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit"})+" "+d.toLocaleTimeString("it-IT",{hour:"2-digit",minute:"2-digit"}); };
+const trigLabel = t => !t ? "" : (t==="baseline" ? "⏰ ciclo" : "⚡ "+String(t).replace("event:",""));
+const css = v => getComputedStyle(document.body).getPropertyValue(v);
 
 function toggleTheme(){
-  const cur = document.documentElement.getAttribute("data-theme");
-  const next = cur==="dark" ? "light" : (cur==="light" ? "dark" : (matchMedia("(prefers-color-scheme: dark)").matches?"light":"dark"));
-  document.documentElement.setAttribute("data-theme", next);
-  try{ localStorage.setItem("theme", next); }catch(e){}
+  const cur=document.documentElement.getAttribute("data-theme");
+  const next=cur==="dark"?"light":(cur==="light"?"dark":(matchMedia("(prefers-color-scheme: dark)").matches?"light":"dark"));
+  document.documentElement.setAttribute("data-theme",next);
+  try{localStorage.setItem("theme",next);}catch(e){}
+  if(D) render(D);
 }
-(function(){ try{ const t=localStorage.getItem("theme"); if(t) document.documentElement.setAttribute("data-theme",t);}catch(e){} })();
+(function(){try{const t=localStorage.getItem("theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}})();
 
 function login(){
-  const pw = $("#pw").value.trim();
-  if(!pw){ $("#loginerr").textContent="Scrivi la password."; return; }
-  sessionStorage.setItem("pw", pw);
-  $("#loginerr").textContent="Verifico…";
-  refresh(true);
+  const pw=$("#pw").value.trim();
+  if(!pw){$("#loginerr").textContent="Scrivi la password.";return;}
+  sessionStorage.setItem("pw",pw); $("#loginerr").textContent="Verifico…"; refresh(true);
 }
 function logout(){ sessionStorage.removeItem("pw"); location.reload(); }
 
-function card(lab, val, hint, klass){
-  return `<div class="card"><div class="lab">${lab}</div>
-    <div class="val ${klass||''}">${val}</div>${hint?`<div class="hint">${hint}</div>`:""}</div>`;
+const card=(lab,val,hint,klass)=>`<div class="card"><div class="lab">${lab}</div>
+  <div class="val ${klass||''}">${val}</div>${hint?`<div class="hint">${hint}</div>`:""}</div>`;
+
+function sortable(tbl, state, renderFn){
+  return cols => `<tr>`+cols.map(([k,label])=>{
+    const arrow = state.k===k ? (state.d<0?" ↓":" ↑") : "";
+    return `<th onclick="setSort('${tbl}','${k}')">${label}${arrow}</th>`;
+  }).join("")+`</tr>`;
+}
+function setSort(tbl,k){
+  const s=sortState[tbl];
+  if(s.k===k) s.d=-s.d; else {s.k=k;s.d=-1;}
+  tbl==="per"?renderPer():renderPos();
 }
 
-function render(d){
-  const m=d.money, e=d.exposure, c=d.costs||{};
+function renderPer(){
+  if(!D) return;
+  const s=sortState.per, f=($("#perFilter").value||"").toUpperCase(), st=$("#perState").value;
+  let rows=(D.per_symbol||[]).filter(x=>(!f||x.base.includes(f)) &&
+      (st==="all"||(st==="open"&&x.open)||(st==="closed"&&!x.open)));
+  rows.sort((a,b)=>{const va=a[s.k]??-1e18,vb=b[s.k]??-1e18;
+    return (typeof va==="string"? va.localeCompare(vb) : va-vb)*s.d;});
+  const head=sortable("per",s)([["base","Crypto"],["open","Stato"],["n","Trade"],["win_rate","Win %"],
+    ["realized","Realizzato"],["unrealized","Non realizz."],["total","Totale"],["pct","% cap."]]);
+  let h=head;
+  for(const x of rows){
+    h+=`<tr><td><b>${symLink(x.base)}</b></td>
+      <td class="dim">${x.open?'🔵 aperta':'⚪ chiusa'}</td>
+      <td>${x.n||0}</td>
+      <td>${x.win_rate==null?'—':x.win_rate.toFixed(0)+'%'}</td>
+      <td class="${cls(x.realized)}">${eur(x.realized)}</td>
+      <td class="${cls(x.unrealized)}">${eur(x.unrealized)}</td>
+      <td class="${cls(x.total)}"><b>${eur(x.total)}</b></td>
+      <td class="${cls(x.pct)}">${pct(x.pct)}</td></tr>`;
+  }
+  if(!rows.length) h+=`<tr><td colspan="8" class="dim">Nessuna cripto corrisponde al filtro.</td></tr>`;
+  $("#pertable").innerHTML=h;
+}
 
-  // hero
-  const verbo = m.pnl_total>=0 ? "guadagnato" : "perso";
-  $("#hero").innerHTML =
+function renderPos(){
+  if(!D) return;
+  const s=sortState.pos, side=$("#posSide").value, e=D.exposure;
+  let rows=(D.positions||[]).filter(p=>side==="all"||p.side===side);
+  rows.sort((a,b)=>{const va=a[s.k]??-1e18,vb=b[s.k]??-1e18;
+    return (typeof va==="string"? va.localeCompare(vb) : va-vb)*s.d;});
+  $("#posTitle").innerHTML=`📊 Portafoglio <span class="cnt">— ${D.positions.length} posizioni (mandato min ${D.mandate.min} · target ${D.mandate.target})</span>`;
+  let h=sortable("pos",s)([["base","Crypto"],["side","Dir."],["leverage","Leva"],["margin","Margine"],
+    ["exposure","Esposiz."],["entry","Apertura"],["mark","Ora"],["upnl","P&L $"],["roe","ROE"]]);
+  for(const p of rows){
+    h+=`<tr><td><b>${symLink(p.base)}</b>${p.anchor?' <span class="dim" title="large-cap">⚓</span>':''}</td>
+      <td><span class="tag ${p.side==='LONG'?'tl':'ts'}">${p.side==='LONG'?'Long':'Short'}</span></td>
+      <td>${p.leverage}x</td><td>${eur0(p.margin)}</td><td>${eur0(p.exposure)}</td>
+      <td class="dim">$${p.entry.toLocaleString("it-IT",{maximumFractionDigits:4})}</td>
+      <td>$${p.mark.toLocaleString("it-IT",{maximumFractionDigits:4})}</td>
+      <td class="${cls(p.upnl)}">${eur(p.upnl)}</td>
+      <td class="${cls(p.roe)}">${pct(p.roe*100)}</td></tr>`;
+  }
+  if(!rows.length) h+=`<tr><td colspan="9" class="dim">Nessuna posizione${side!=="all"?" su questo lato":""}.</td></tr>`;
+  $("#postable").innerHTML=h;
+}
+
+function renderClaude(){
+  const c=D.claude;
+  if(!c){
+    $("#claude").innerHTML=`<div class="note">I ragionamenti di Claude vivono sul journal della VM Oracle.
+      Per vederli qui: crea uno store <b>Blob</b> su Vercel, metti <code>BLOB_READ_WRITE_TOKEN</code> nel .env della VM
+      e l'URL pubblico dello snapshot come <code>SNAPSHOT_URL</code> nelle env del progetto Vercel (istruzioni nel README della cartella web).</div>`;
+    $("#claudeAge").textContent=""; return;
+  }
+  $("#claudeAge").textContent = c.generated_at ? `— aggiornato ${ago(new Date(c.generated_at).getTime())}` : "";
+  let h="";
+  const decs=c.decisions||[];
+  if(decs.length){
+    const last=decs[0];
+    h+=`<div class="note"><b>L'ultima lettura del mercato</b>
+        <span class="dim" style="font-size:.76rem">· ${fmtTs(last.ts)} · ${trigLabel(last.trigger)}</span><br>${last.market_view||"—"}</div>`;
+  }
+  const em={long:"🟢",short:"🔻",flat:"⚪",close:"🚪"};
+  const lb={long:"Apri LONG",short:"Apri SHORT",flat:"Mantieni / nessuna azione",close:"Chiudi"};
+  for(const d of decs.slice(0,8)){
+    const items=d.decisions||[];
+    const nl=items.filter(i=>i.action==="long").length, ns=items.filter(i=>i.action==="short").length,
+          nc=items.filter(i=>i.action==="close").length;
+    let body="";
+    for(const i of items){
+      const p=(i.action==="long"||i.action==="short")&&i.sl!=null ?
+        ` · <b>${i.leverage}x</b> · SL <b>${(i.sl*100).toFixed(0)}%</b> · TP <b>+${(i.tp*100).toFixed(0)}%</b>` : "";
+      body+=`<div class="drow">${em[i.action]||"•"} <b>${symLink((i.symbol||"").replace("USDT",""))}</b>
+        — ${lb[i.action]||i.action} · fiducia <b>${((i.confidence||0)*100).toFixed(0)}%</b>${p}
+        <div class="rs">${i.reasoning||""}</div></div>`;
+    }
+    h+=`<details><summary>${fmtTs(d.ts)} · ${trigLabel(d.trigger)} · ${items.length} valutate
+        · 🟢 ${nl} long · 🔻 ${ns} short · 🚪 ${nc} chiusure</summary>
+        <div class="dbody">${d.market_view?`<div class="sub" style="margin:8px 0"><b>Vista macro:</b> ${d.market_view}</div>`:""}${body}</div></details>`;
+  }
+  const ls=c.lessons||[];
+  if(ls.length){
+    h+=`<div style="margin-top:14px"><b style="font-size:.9rem">🧬 Le lezioni che ha imparato da solo</b>
+        <span class="dim" style="font-size:.76rem">— le riscrive ogni giorno riflettendo sui propri risultati</span></div>`;
+    for(const l of ls)
+      h+=`<div class="lesson"><span class="sc">${l.scope==="global"?"🌐 globale":"🎯 "+String(l.scope).replace("USDT","")}</span><br>${l.text}</div>`;
+  }
+  if(c.equity_curve && c.equity_curve.length>2){
+    h+=`<div class="card" style="margin-top:12px"><div class="lab">Equity del conto nel tempo — i puntini segnano QUANDO Claude ha deciso (⏰ ciclo · ⚡ evento)</div>
+        <canvas id="eqchart" height="150"></canvas></div>`;
+  }
+  $("#claude").innerHTML=h;
+  if(c.equity_curve && c.equity_curve.length>2) drawEquity(c);
+}
+
+function drawEquity(c){
+  const cv=$("#eqchart"); if(!cv) return;
+  const dpr=window.devicePixelRatio||1, W=cv.clientWidth, H=150;
+  cv.width=W*dpr; cv.height=H*dpr;
+  const x=cv.getContext("2d"); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
+  const pts=c.equity_curve.map(p=>[new Date(p[0]).getTime(), p[1]]);
+  const t0=pts[0][0], t1=pts[pts.length-1][0]||t0+1;
+  const ys=pts.map(p=>p[1]), mn=Math.min(...ys), mx=Math.max(...ys), rg=(mx-mn)||1;
+  const px=t=>4+(t-t0)/(t1-t0)*(W-8), py=v=>H-16-((v-mn)/rg)*(H-32);
+  if(c.initial_capital>=mn&&c.initial_capital<=mx){
+    x.strokeStyle=css("--line"); x.setLineDash([4,4]); x.beginPath();
+    x.moveTo(0,py(c.initial_capital)); x.lineTo(W,py(c.initial_capital)); x.stroke(); x.setLineDash([]);
+  }
+  x.strokeStyle=css("--accent"); x.lineWidth=1.8; x.beginPath();
+  pts.forEach((p,i)=>i?x.lineTo(px(p[0]),py(p[1])):x.moveTo(px(p[0]),py(p[1]))); x.stroke();
+  for(const d of (c.decisions||[])){
+    const t=new Date(d.ts).getTime(); if(t<t0||t>t1) continue;
+    let j=0; while(j<pts.length-1&&pts[j+1][0]<t) j++;
+    x.fillStyle = d.trigger==="baseline"? css("--accent") : "#f4a825";
+    x.beginPath(); x.arc(px(t),py(pts[j][1]),3,0,7); x.fill();
+  }
+  x.fillStyle=css("--muted"); x.font="10px sans-serif";
+  x.fillText(eur0(mx),4,12); x.fillText(eur0(mn),4,H-4);
+}
+
+function drawMulti(){
+  const cv=$("#multichart"), series=(D.per_symbol_curves||[]).filter(s=>!hiddenSeries.has(s.base));
+  const dpr=window.devicePixelRatio||1, W=cv.clientWidth, H=240;
+  cv.width=W*dpr; cv.height=H*dpr;
+  const x=cv.getContext("2d"); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
+  const all=(D.per_symbol_curves||[]);
+  $("#mlegend").innerHTML = all.map((s,i)=>
+    `<span class="${hiddenSeries.has(s.base)?'off':''}" onclick="togSeries('${s.base}')">
+       <i style="background:${PALETTE[i%PALETTE.length]}"></i>${s.base}</span>`).join("");
+  if(!series.length) return;
+  let t0=Infinity,t1=-Infinity,mn=0,mx=0;
+  for(const s of series) for(const [t,v] of s.points){
+    if(t<t0)t0=t; if(t>t1)t1=t; if(v<mn)mn=v; if(v>mx)mx=v; }
+  if(t1<=t0) t1=t0+1; const rg=(mx-mn)||1;
+  const px=t=>42+(t-t0)/(t1-t0)*(W-50), py=v=>H-22-((v-mn)/rg)*(H-38);
+  x.strokeStyle=css("--line"); x.lineWidth=1;
+  x.beginPath(); x.moveTo(42,py(0)); x.lineTo(W-6,py(0)); x.stroke();
+  x.fillStyle=css("--muted"); x.font="10px sans-serif";
+  x.fillText(eur0(mx),2,py(mx)+4); x.fillText("$0",2,py(0)+4); if(mn<0) x.fillText(eur0(mn),2,py(mn)+4);
+  for(let i=0;i<3;i++){
+    const t=t0+(t1-t0)*i/2, d=new Date(t);
+    x.fillText(d.toLocaleDateString("it-IT",{day:"2-digit",month:"2-digit"}), px(t)-12, H-8);
+  }
+  all.forEach((s,i)=>{
+    if(hiddenSeries.has(s.base)) return;
+    x.strokeStyle=PALETTE[i%PALETTE.length]; x.lineWidth=1.8; x.beginPath();
+    s.points.forEach((p,j)=>{ const X=px(p[0]),Y=py(p[1]);
+      j?x.lineTo(X,Y):x.moveTo(X,Y); x.lineTo(X,Y); });   // step-ish
+    x.stroke();
+    const lp=s.points[s.points.length-1];
+    x.fillStyle=PALETTE[i%PALETTE.length];
+    x.beginPath(); x.arc(px(lp[0]),py(lp[1]),3,0,7); x.fill();
+  });
+}
+function togSeries(b){ hiddenSeries.has(b)?hiddenSeries.delete(b):hiddenSeries.add(b); drawMulti(); }
+
+function render(d){
+  D=d;
+  const m=d.money, e=d.exposure, c=d.costs||{};
+  const verbo=m.pnl_total>=0?"guadagnato":"perso";
+  $("#hero").innerHTML=
     `<div class="big">${m.pnl_total>=0?'🟢':'🔴'} Finora hai ${verbo} <span class="${cls(m.pnl_total)}">${eur(m.pnl_total)}</span>
        <span class="${cls(m.pnl_total)}" style="font-size:1.1rem">(${pct(m.pnl_total_pct)})</span></div>
-     <div class="brk">= <b>${eur(m.pnl_realized)}</b> già realizzati (in tasca) &nbsp;+&nbsp; <b>${eur(m.unrealized)}</b> sulla carta (posizioni aperte)
-       &nbsp;·&nbsp; capitale iniziale ${eur(m.initial)}</div>`;
+     <div class="brk">= <b>${eur(m.pnl_realized)}</b> già realizzati (in tasca) + <b>${eur(m.unrealized)}</b> sulla carta (posizioni aperte)
+       · capitale iniziale ${eur(m.initial)}</div>`;
 
-  // money cards + costs + best/worst
+  $("#insights").innerHTML=(d.insights||[]).map(i=>
+    `<div class="card ins"><div class="ico">${i.icon}</div><div><div class="tt">${i.title}</div><div class="tx">${i.text}</div></div></div>`).join("")
+    || `<div class="card dim">Ancora pochi dati per gli insight.</div>`;
+
   let money =
     card("Capitale iniziale", eur(m.initial), "baseline dal reset 15/07") +
     card("Valore conto ORA", eur(m.equity), pct(m.pnl_total_pct)+" dall'inizio", cls(m.pnl_total)) +
     card("↳ realizzato", eur(m.pnl_realized), "trade chiusi, soldi veri", cls(m.pnl_realized)) +
     card("↳ sulla carta", eur(m.unrealized), "posizioni aperte", cls(m.unrealized));
-  if(c.funding_total!==undefined)
-    money += card("💧 Funding pagato/incassato", eur(c.funding_total), "sui perpetui, dal reset", cls(c.funding_total));
-  if(c.commission_total!==undefined)
-    money += card("🧾 Commissioni", eur(c.commission_total), "costo di trading, dal reset", cls(c.commission_total));
-  if(d.best_pos)
-    money += card("🏆 Miglior posizione", d.best_pos.base+" "+eur(d.best_pos.upnl), pct(d.best_pos.roe*100)+" ROE", cls(d.best_pos.upnl));
-  if(d.worst_pos)
-    money += card("💀 Peggior posizione", d.worst_pos.base+" "+eur(d.worst_pos.upnl), pct(d.worst_pos.roe*100)+" ROE", cls(d.worst_pos.upnl));
-  $("#money").innerHTML = money;
+  if(c.funding_total!==undefined) money+=card("💧 Funding", eur(c.funding_total), "pagato/incassato sui perpetui", cls(c.funding_total));
+  if(c.commission_total!==undefined) money+=card("🧾 Commissioni", eur(c.commission_total), "costo di trading, dal reset", cls(c.commission_total));
+  if(d.best_pos) money+=card("🏆 Miglior posizione", d.best_pos.base+" "+eur(d.best_pos.upnl), pct(d.best_pos.roe*100)+" ROE", cls(d.best_pos.upnl));
+  if(d.worst_pos) money+=card("💀 Peggior posizione", d.worst_pos.base+" "+eur(d.worst_pos.upnl), pct(d.worst_pos.roe*100)+" ROE", cls(d.worst_pos.upnl));
+  $("#money").innerHTML=money;
 
-  // per-crypto
-  const ps = d.per_symbol || [];
-  let pr = `<tr><th>Crypto</th><th>Stato</th><th>Realizzato</th><th>Non realizz.</th><th>Totale</th><th>% cap.</th></tr>`;
-  for(const s of ps){
-    pr += `<tr>
-      <td><b>${symLink(s.base)}</b></td>
-      <td class="dim">${s.open?'🔵 aperta':'⚪ chiusa'}</td>
-      <td class="${cls(s.realized)}">${eur(s.realized)}</td>
-      <td class="${cls(s.unrealized)}">${eur(s.unrealized)}</td>
-      <td class="${cls(s.total)}"><b>${eur(s.total)}</b></td>
-      <td class="${cls(s.pct)}">${pct(s.pct)}</td>
-    </tr>`;
-  }
-  if(!ps.length) pr += `<tr><td colspan="6" class="dim">Ancora nessun trade da mostrare.</td></tr>`;
-  $("#pertable").innerHTML = pr;
+  renderClaude();
+  drawMulti();
+  renderPer();
 
-  // bravura o fortuna
   const b=d.benchmark, rk=d.risk||{};
   let q="";
   if(b){
-    q += card("Rendimento strategia", pct(b.strat_ret_pct), "dal reset", cls(b.strat_ret_pct)) +
-         card("BTC compra&tieni", pct(b.btc_ret_pct), "stessa finestra", cls(b.btc_ret_pct)) +
-         card("Alpha (vs BTC)", pct(b.alpha_pct), "quanto batti BTC", cls(b.alpha_pct));
+    q+=card("Rendimento strategia",pct(b.strat_ret_pct),"dal reset",cls(b.strat_ret_pct))+
+       card("BTC compra&tieni",pct(b.btc_ret_pct),"stessa finestra",cls(b.btc_ret_pct))+
+       card("Alpha (vs BTC)",pct(b.alpha_pct),"quanto batti BTC",cls(b.alpha_pct));
   }
   if(rk.max_drawdown_pct!==undefined)
-    q += card("Max drawdown", rk.max_drawdown_pct.toFixed(2)+"%", "realizzato, dai massimi", rk.max_drawdown_pct<0?"neg":"");
-  $("#quality").innerHTML = q || `<div class="card dim">Dati insufficienti.</div>`;
+    q+=card("Max drawdown",rk.max_drawdown_pct.toFixed(2)+"%","realizzato, dai massimi",rk.max_drawdown_pct<0?"neg":"");
+  $("#quality").innerHTML=q||`<div class="card dim">Dati insufficienti.</div>`;
   if(b){
     const a=b.alpha_pct;
-    const [vk,txt] = a>2 ? ["vg",`✅ Batti BTC di ${pct(a)}: c'è segnale di alpha — ma pochi giorni, serve conferma su settimane e su una fase ribassista.`]
-                  : a<-2 ? ["vr",`⚠️ Fai ${pct(a)} rispetto a BTC: in questa finestra tenerlo e non fare nulla avrebbe reso di più. È beta (marea), non bravura.`]
-                         : ["vn",`➖ Sostanzialmente in linea con BTC (${pct(a)}): finora è soprattutto il mercato. Il verdetto vero arriva quando BTC scende.`];
-    $("#verdict").innerHTML = `<div class="verdict ${vk}">${txt}</div>`;
+    const [vk,txt]=a>2?["vg",`✅ Batti BTC di ${pct(a)}: c'è segnale di alpha — ma pochi giorni, serve conferma su settimane e su una fase ribassista.`]
+              :a<-2?["vr",`⚠️ Fai ${pct(a)} rispetto a BTC: tenerlo e non fare nulla avrebbe reso di più. È beta (marea), non bravura.`]
+                   :["vn",`➖ In linea con BTC (${pct(a)}): finora è soprattutto il mercato. Il verdetto vero arriva quando BTC scende.`];
+    $("#verdict").innerHTML=`<div class="verdict ${vk}">${txt}</div>`;
   } else $("#verdict").innerHTML="";
 
-  // exposure
-  const bias = e.total_exposure? (e.net_exp/e.total_exposure*100):0;
-  $("#exposure").innerHTML =
-    card("Margine impegnato", eur0(e.deployed_margin), e.deployed_pct.toFixed(0)+"% del conto") +
-    card("Disponibile", eur0(m.available), "liquidità libera") +
-    card("Esposizione totale", eur0(e.total_exposure), "leva media "+e.avg_leverage.toFixed(1)+"x") +
-    card("Long vs Short", e.n_long+"L / "+e.n_short+"S", eur0(e.long_exp)+" vs "+eur0(e.short_exp)) +
-    card("Esposizione netta", (e.net_exp>=0?"+":"")+eur0(e.net_exp), pct(bias)+" "+(e.net_exp>=0?"long":"short")+" bias", cls(e.net_exp));
+  const bias=e.total_exposure?(e.net_exp/e.total_exposure*100):0;
+  $("#exposure").innerHTML=
+    card("Margine impegnato",eur0(e.deployed_margin),e.deployed_pct.toFixed(0)+"% del conto")+
+    card("Disponibile",eur0(m.available),"liquidità libera")+
+    card("Esposizione totale",eur0(e.total_exposure),"leva media "+e.avg_leverage.toFixed(1)+"x")+
+    card("Long vs Short",e.n_long+"L / "+e.n_short+"S",eur0(e.long_exp)+" vs "+eur0(e.short_exp))+
+    card("Esposizione netta",(e.net_exp>=0?"+":"")+eur0(e.net_exp),pct(bias)+" "+(e.net_exp>=0?"long":"short")+" bias",cls(e.net_exp));
 
-  // positions
-  $("#posTitle").innerHTML = `📊 Portafoglio <span class="cnt">— ${d.positions.length} posizioni (mandato min ${d.mandate.min} · target ${d.mandate.target})</span>`;
-  let rows = `<tr><th>Crypto</th><th>Dir.</th><th>Leva</th><th>Margine</th><th>% book</th><th>Apertura</th><th>Ora</th><th>P&L $</th><th>ROE</th></tr>`;
-  for(const p of d.positions){
-    const w = e.deployed_margin? (p.margin/e.deployed_margin*100):0;
-    rows += `<tr>
-      <td><b>${symLink(p.base)}</b>${p.anchor?' <span class="dim" title="large-cap">⚓</span>':''}</td>
-      <td><span class="tag ${p.side==='LONG'?'tl':'ts'}">${p.side==='LONG'?'Long':'Short'}</span></td>
-      <td>${p.leverage}x</td>
-      <td>${eur0(p.margin)}</td>
-      <td>${w.toFixed(0)}%</td>
-      <td class="dim">$${p.entry.toLocaleString("it-IT",{maximumFractionDigits:4})}</td>
-      <td>$${p.mark.toLocaleString("it-IT",{maximumFractionDigits:4})}</td>
-      <td class="${cls(p.upnl)}">${eur(p.upnl)}</td>
-      <td class="${cls(p.roe)}">${pct(p.roe*100)}</td>
-    </tr>`;
-  }
-  if(!d.positions.length) rows += `<tr><td colspan="9" class="dim">Nessuna posizione aperta — il mandato le riaprirà (serve Claude attivo).</td></tr>`;
-  $("#postable").innerHTML = rows;
+  renderPos();
 
-  // movements
-  const mv = d.movements || [];
-  $("#mvcnt").textContent = mv.length? `— ultime ${mv.length} chiusure` : "";
-  let mh = "";
-  for(const x of mv){
-    const win = x.amount>=0;
-    mh += `<div class="row">
-      <div class="ic ${win?'win':'loss'}">${win?'🎯':'🛑'}</div>
+  const mv=d.movements||[];
+  $("#mvcnt").textContent=mv.length?`— ultime ${mv.length} chiusure (🎯 target · 🛑 stop)`:"";
+  $("#movements").innerHTML = mv.length ? mv.map(x=>{
+    const win=x.amount>=0;
+    return `<div class="row"><div class="ic ${win?'win':'loss'}">${win?'🎯':'🛑'}</div>
       <div class="who">${symLink(x.base)} <span class="dim">chiusa</span><br><span class="t">${ago(x.ts)}</span></div>
-      <div class="amt ${cls(x.amount)}">${eur(x.amount)}</div>
-    </div>`;
-  }
-  if(!mv.length) mh = `<div class="row dim">Nessuna chiusura registrata ancora.</div>`;
-  $("#movements").innerHTML = mh;
+      <div class="amt ${cls(x.amount)}">${eur(x.amount)}</div></div>`;
+  }).join("") : `<div class="row dim">Nessuna chiusura registrata ancora.</div>`;
 
-  // track record
   const t=d.track;
-  const pf = t.profit_factor===null? "∞" : (t.profit_factor<0? "—" : t.profit_factor.toFixed(2));
-  const wrColor = t.win_rate>=45? "pos" : (t.win_rate>=30? "" : "neg");
-  $("#track").innerHTML =
-    card("Trade chiusi (7g)", t.n) +
-    card("Win-rate", t.win_rate.toFixed(0)+"%", "ultimi 10: "+t.win_rate_10.toFixed(0)+"%", wrColor) +
-    card("Netto realizzato 7g", eur(t.net), "", cls(t.net)) +
-    card("Media win / loss", (t.avg_win?("+"+t.avg_win.toFixed(0)):"—")+" / "+(t.avg_loss?t.avg_loss.toFixed(0):"—"), "in $") +
-    card("Profit factor", pf, "vincite ÷ perdite", (pf!=="—"&&(pf==="∞"||parseFloat(pf)>=1))?"pos":"neg");
+  const pf=t.profit_factor===null?"∞":(t.profit_factor<0?"—":t.profit_factor.toFixed(2));
+  $("#track").innerHTML=
+    card("Trade chiusi (7g)",t.n)+
+    card("Win-rate",t.win_rate.toFixed(0)+"%","ultimi 10: "+t.win_rate_10.toFixed(0)+"%",t.win_rate>=45?"pos":(t.win_rate>=30?"":"neg"))+
+    card("Netto realizzato 7g",eur(t.net),"",cls(t.net))+
+    card("Media win / loss",(t.avg_win?("+"+t.avg_win.toFixed(0)):"—")+" / "+(t.avg_loss?t.avg_loss.toFixed(0):"—"),"in $")+
+    card("Profit factor",pf,"vincite ÷ perdite",(pf!=="—"&&(pf==="∞"||parseFloat(pf)>=1))?"pos":"neg");
 
   drawCurve(d.realized_curve);
-  $("#updated").textContent = "aggiornato " + new Date(d.ts).toLocaleTimeString("it-IT");
-  $("#footer").textContent = "Auto-refresh 30s · dati live da Binance Futures Testnet · il bot gira su Oracle Cloud.";
+  $("#updated").textContent="aggiornato "+new Date(d.ts).toLocaleTimeString("it-IT");
+  $("#footer").textContent="Auto-refresh 30s · dati live da Binance Futures Testnet · il bot gira 24/7 su Oracle Cloud.";
 }
 
 function drawCurve(pts){
-  const c=$("#curve"), dpr=window.devicePixelRatio||1;
-  const W=c.clientWidth, H=130; c.width=W*dpr; c.height=H*dpr;
-  const x=c.getContext("2d"); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
+  const cv=$("#curve"), dpr=window.devicePixelRatio||1, W=cv.clientWidth, H=130;
+  cv.width=W*dpr; cv.height=H*dpr;
+  const x=cv.getContext("2d"); x.scale(dpr,dpr); x.clearRect(0,0,W,H);
   if(!pts||pts.length<2) return;
-  const ys=pts.map(p=>p[1]), min=Math.min(...ys,0), max=Math.max(...ys,0), range=(max-min)||1;
-  const px=i=>i/(pts.length-1)*(W-8)+4, py=v=>H-6-((v-min)/range)*(H-16);
-  const g=getComputedStyle(document.body);
-  const last=ys[ys.length-1];
-  const col = last>=0? g.getPropertyValue("--green") : g.getPropertyValue("--red");
-  // area fill
+  const ys=pts.map(p=>p[1]), mn=Math.min(...ys,0), mx=Math.max(...ys,0), rg=(mx-mn)||1;
+  const px=i=>i/(pts.length-1)*(W-8)+4, py=v=>H-6-((v-mn)/rg)*(H-16);
+  const col = ys[ys.length-1]>=0? css("--green") : css("--red");
   x.beginPath(); x.moveTo(px(0),py(pts[0][1]));
   pts.forEach((p,i)=>x.lineTo(px(i),py(p[1])));
   x.lineTo(px(pts.length-1),py(0)); x.lineTo(px(0),py(0)); x.closePath();
-  x.fillStyle = col+"22"; x.fill();
-  // zero line
-  x.strokeStyle=g.getPropertyValue("--line"); x.lineWidth=1;
-  x.beginPath(); x.moveTo(0,py(0)); x.lineTo(W,py(0)); x.stroke();
-  // line
+  x.fillStyle=col+"22"; x.fill();
+  x.strokeStyle=css("--line"); x.lineWidth=1; x.beginPath(); x.moveTo(0,py(0)); x.lineTo(W,py(0)); x.stroke();
   x.strokeStyle=col; x.lineWidth=1.9; x.beginPath();
-  pts.forEach((p,i)=>{ i?x.lineTo(px(i),py(p[1])):x.moveTo(px(i),py(p[1])); }); x.stroke();
+  pts.forEach((p,i)=>{i?x.lineTo(px(i),py(p[1])):x.moveTo(px(i),py(p[1]));}); x.stroke();
 }
 
 async function refresh(first){
-  const pw = sessionStorage.getItem("pw");
-  if(!pw){ $("#login").style.display="block"; $("#app").style.display="none"; return; }
+  const pw=sessionStorage.getItem("pw");
+  if(!pw){$("#login").style.display="block";$("#app").style.display="none";return;}
   try{
-    const r = await fetch("/api/state?pw="+encodeURIComponent(pw), {cache:"no-store"});
-    if(r.status===401){ sessionStorage.removeItem("pw"); if(first) $("#loginerr").textContent="Password sbagliata."; else logout(); return; }
-    const d = await r.json();
-    if(d.error){ $("#loginerr").textContent=d.error; if(first){$("#login").style.display="block";$("#app").style.display="none";} return; }
-    $("#login").style.display="none"; $("#app").style.display="block";
+    const r=await fetch("/api/state?pw="+encodeURIComponent(pw),{cache:"no-store"});
+    if(r.status===401){sessionStorage.removeItem("pw");if(first)$("#loginerr").textContent="Password sbagliata.";else logout();return;}
+    const d=await r.json();
+    if(d.error){$("#loginerr").textContent=d.error;if(first){$("#login").style.display="block";$("#app").style.display="none";}return;}
+    $("#login").style.display="none";$("#app").style.display="block";
     render(d);
-  }catch(err){ if(first) $("#loginerr").textContent="Errore di rete: "+err.message; }
+  }catch(err){ if(first)$("#loginerr").textContent="Errore di rete: "+err.message; }
 }
 
-$("#pw").addEventListener("keydown", e=>{ if(e.key==="Enter") login(); });
-if(sessionStorage.getItem("pw")){ $("#login").style.display="none"; refresh(true); }
-setInterval(()=>{ if(sessionStorage.getItem("pw")) refresh(false); }, 30000);
+$("#pw").addEventListener("keydown",e=>{if(e.key==="Enter")login();});
+if(sessionStorage.getItem("pw")){$("#login").style.display="none";refresh(true);}
+setInterval(()=>{if(sessionStorage.getItem("pw"))refresh(false);},30000);
 </script>
 </body>
 </html>
