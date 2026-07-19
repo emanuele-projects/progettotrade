@@ -341,7 +341,7 @@ def build_state() -> dict:
         "insights": insights,
         "claude": claude,
         "realized_curve": cum[-500:],
-        "mandate": {"min": 10, "target": 12},
+        "mandate": {"min": 2, "target": 4},  # conviction book (2026-07-19)
     }
 
 

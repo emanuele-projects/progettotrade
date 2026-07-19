@@ -95,7 +95,8 @@ with title_col:
     st.title("Trading Bot")
     st.caption(
         f"Paper trading (testnet) · Auto-refresh {REFRESH_SECONDS}s · "
-        f"Portafoglio sempre investito · Claude {CFG.CLAUDE_MODEL} · long/short · SL/TP sull'exchange"
+        f"Conviction book {CFG.MIN_OPEN_POSITIONS}-{CFG.TARGET_OPEN_POSITIONS} posizioni + hedge · "
+        f"Claude {CFG.CLAUDE_MODEL} · long/short · SL/TP sull'exchange"
     )
 with logout_col:
     st.markdown("<div style='height: 1.5rem'></div>", unsafe_allow_html=True)

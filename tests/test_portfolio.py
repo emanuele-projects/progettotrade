@@ -63,8 +63,9 @@ class TestServerProtectedBackstop(unittest.TestCase):
 
 class TestPortfolioStatus(unittest.TestCase):
     def test_below_minimum_mandates_entries(self):
-        txt = strategy.build_portfolio_status(6)
-        need = CFG.MIN_OPEN_POSITIONS - 6
+        n = CFG.MIN_OPEN_POSITIONS - 1
+        txt = strategy.build_portfolio_status(n)
+        need = CFG.MIN_OPEN_POSITIONS - n
         self.assertIn("BELOW the minimum", txt)
         self.assertIn(f"at least {need} new position(s)", txt)
 
@@ -72,8 +73,17 @@ class TestPortfolioStatus(unittest.TestCase):
         txt = strategy.build_portfolio_status(CFG.MIN_OPEN_POSITIONS)
         self.assertIn("book compliant", txt)
 
+    def test_above_cap_prunes(self):
+        txt = strategy.build_portfolio_status(CFG.MAX_CONCURRENT_POSITIONS + 3)
+        self.assertIn("ABOVE THE CONCENTRATED CAP", txt)
+        self.assertIn("CLOSE", txt)
+
+    def test_defensive_mode_text(self):
+        txt = strategy.build_portfolio_status(3, defensive=True)
+        self.assertIn("DEFENSIVE MODE", txt)
+
     def test_status_flows_into_user_prompt(self):
-        status = strategy.build_portfolio_status(3)
+        status = strategy.build_portfolio_status(CFG.MIN_OPEN_POSITIONS - 1)
         prompt = strategy.build_user_prompt(
             candidates=[], open_positions=[],
             fear_greed={"value": 30, "classification": "Fear"},

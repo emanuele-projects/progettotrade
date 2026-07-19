@@ -54,22 +54,24 @@ class Config:
     MARGIN_TYPE: str = "ISOLATED"
     INITIAL_DEPLOY_PCT: float = 0.50         # 50% margin deployed initially
     RESERVE_FOR_AVERAGING_PCT: float = 0.50  # 50% kept liquid for martingale
-    MAX_CONCURRENT_POSITIONS: int = 14       # portfolio mode: min 10, target 12, cap 14
-    POSITION_MARGIN_PCT: float = 0.05        # 5% per entry × 12 target = ~60% margin deployed
+    # CONVICTION mode (2026-07-19, user request): few LARGE positions instead of
+    # a 10-14 fleet of small ones. Big reasoned bets with wide exchange-held
+    # TP/SL left to resolve, plus a hedge leg (BTC/ETH short) protecting the
+    # book. Fewer entries = far fewer Claude calls and far less commission churn.
+    MAX_CONCURRENT_POSITIONS: int = 5        # 3-4 conviction bets + 1 hedge
+    POSITION_MARGIN_PCT: float = 0.15        # 15% of capital per entry (~$590)
 
     # ---- Leverage v3 (5x-20x, per-trade, agent-chosen) ----
     ALLOWED_LEVERAGES: tuple[int, ...] = (5, 10, 15, 20)
     MAX_LEVERAGE: int = 20
     LEVERAGE_BRACKET_REFRESH_HOURS: int = 24  # per-symbol max-leverage cache TTL
 
-    # ---- Always-invested portfolio (2026-07-15, user mandate) ----
-    # The book must hold at least MIN_OPEN_POSITIONS at all times, aiming for
-    # TARGET_OPEN_POSITIONS. Caution is expressed through leverage/stops and
-    # long-short balance, not by sitting flat. When a server-side SL/TP fill
-    # empties a slot, the user-stream handler emits a risk_exit trigger and the
-    # next (batched) Claude call refills strategically.
-    MIN_OPEN_POSITIONS: int = 10
-    TARGET_OPEN_POSITIONS: int = 12
+    # ---- Book mandate (CONVICTION mode 2026-07-19; was always-invested 10-14) ----
+    # Keep at least MIN_OPEN_POSITIONS conviction bets working (so capital is
+    # never idle) up to TARGET_OPEN_POSITIONS. Small minimum = no forced refill
+    # churn: an empty slot waits for an A+ setup instead of demanding filler.
+    MIN_OPEN_POSITIONS: int = 2
+    TARGET_OPEN_POSITIONS: int = 4
 
     # ---- Server-side protection (exchange-held SL/TP orders) ----
     # Place STOP_MARKET + TAKE_PROFIT_MARKET (closePosition) on the exchange at
@@ -120,20 +122,20 @@ class Config:
     MIN_MARKET_CAP_USD: float = 200_000_000   # (legacy midcap mode only)
     MAX_MARKET_CAP_USD: float = 2_000_000_000 # (legacy midcap mode only)
     UNIVERSE_REFRESH_HOURS: int = 6
-    UNIVERSE_MAX_CANDIDATES: int = 18          # token-save: fewer candidates per prompt
+    UNIVERSE_MAX_CANDIDATES: int = 10          # conviction: only the strongest movers make the prompt
 
     # ---- Loop ----
     LOOP_INTERVAL_SECONDS: int = 15 * 60  # legacy fixed cycle; Phase 5 switches to BASELINE_INTERVAL_SECONDS
 
     # ---- Claude call policy (event-driven agent) ----
-    # TOKEN-SAVE profile (2026-07-15, for a low-cost 7-day run): baseline every 4h
-    # as safety net; the free scanner drives the fast decisions on real breakouts.
-    # Event cap kept low so a week of running stays ~$1-1.5/day.
-    BASELINE_INTERVAL_SECONDS: int = 4 * 60 * 60  # 4h full-book review
-    BASELINE_SKIP_IF_CALLED_WITHIN: int = 1200  # skip baseline if a Claude call ran in the last 20 min
-    EVENT_DEBOUNCE_SECONDS: int = 90           # collect triggers for this long before calling
-    EVENT_MIN_CALL_INTERVAL_SECONDS: int = 300 # ≥5 min gap between any two Claude calls
-    EVENT_MAX_CALLS_PER_HOUR: int = 4          # token bucket for event-triggered calls
+    # CONVICTION token-save profile (2026-07-19): a 2-5 position book needs few
+    # decisions. Baseline every 6h + at most 2 event calls/h → ~8-12 calls/day
+    # (~$0.4-0.6/day with Opus + cache), down from ~65/day in fleet mode.
+    BASELINE_INTERVAL_SECONDS: int = 6 * 60 * 60  # 6h full review
+    BASELINE_SKIP_IF_CALLED_WITHIN: int = 1800  # skip baseline if a Claude call ran in the last 30 min
+    EVENT_DEBOUNCE_SECONDS: int = 120          # collect triggers for this long before calling
+    EVENT_MIN_CALL_INTERVAL_SECONDS: int = 600 # ≥10 min gap between any two Claude calls
+    EVENT_MAX_CALLS_PER_HOUR: int = 2          # token bucket for event-triggered calls
     # Raw price-move trigger from the WS layer: kept only for EXTREME fast moves
     # (the scanner is the primary, qualified trigger source now).
     EVENT_PRICE_MOVE_PCT_HELD: float = 0.05       # 5% move in window on a held symbol
@@ -178,8 +180,8 @@ class Config:
     # fired, and ~$150/day of commissions (fees ate ~100% of gross trade P&L).
     # These guards are DETERMINISTIC (enforced in code, not just prompt):
     REENTRY_COOLDOWN_HOURS_AFTER_STOP: float = 4.0  # no re-entry after a SL/liq-guard exit
-    MAX_OPENS_PER_SYMBOL_PER_DAY: int = 3           # a symbol that keeps stopping out is done for the day
-    MAX_OPENS_PER_DAY: int = 40                     # global churn budget (was hitting ~84)
+    MAX_OPENS_PER_SYMBOL_PER_DAY: int = 2           # conviction mode: a stopped bet is done for the day
+    MAX_OPENS_PER_DAY: int = 12                     # global churn budget (fleet mode was hitting ~84)
     ENTRY_FAIL_BLACKLIST_AFTER: int = 2             # skip a symbol 24h after N failed open attempts
     REFILL_DEBOUNCE_SECONDS: int = 600              # batch stop-clusters into ONE refill call (was instant)
 
@@ -188,7 +190,7 @@ class Config:
     # entries) until equity recovers half the gap (hysteresis). This is the
     # "don't give the whole week back" rail (peak $5,210 → flat in 36h).
     DRAWDOWN_BRAKE_PCT: float = 0.08
-    DEFENSIVE_MIN_POSITIONS: int = 6
+    DEFENSIVE_MIN_POSITIONS: int = 2
     DEFENSIVE_MAX_LEVERAGE: int = 5
     DEFENSIVE_MARGIN_FACTOR: float = 0.5
 

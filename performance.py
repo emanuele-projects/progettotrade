@@ -51,23 +51,22 @@ def build_performance_review(client, lookback_days: int = 7,
 
     if wr < 25:
         guidance = (
-            "Recent win-rate is POOR — most entries have been wrong. Keep the book invested (the mandate "
-            "stands) but de-risk it HARD: drop the whole book to 5x-10x, widen stops so intraday noise "
-            "can't tag them, balance longs and shorts toward market-neutral, and reserve 15x-20x for "
-            "nothing. Rotate toward whichever side/setups HAVE been working; if one side keeps failing "
-            "in this regime, tilt the balance the other way. Change the mix — not the investment level."
+            "Recent win-rate is POOR — most entries have been wrong. In a conviction book the fix is "
+            "PATIENCE: raise the bar hard (only unambiguous A+ setups), drop to 5x-10x, widen stops so "
+            "noise can't tag them, and keep the hedge on. The minimum book is only 2 — you can afford "
+            "to wait for the market to become readable instead of forcing big bets into chop."
         )
     elif wr < 45:
         guidance = (
-            "Below breakeven. Keep the book at the mandate but favor lower leverage on marginal picks, "
-            "confirmatory flow on every entry, and do not re-open a name you were just stopped out of "
-            "unless it genuinely re-qualifies. Prefer rotating into fresher setups over forcing re-entries."
+            "Below breakeven. Favor lower leverage on marginal reads, demand confirmatory flow on every "
+            "entry, and do not re-open a name you were just stopped out of unless it genuinely "
+            "re-qualifies. Fewer, better bets — each entry is a sixth of the account."
         )
     else:
         guidance = (
             "Win-rate is acceptable — keep the discipline that is working: size stops for the mover's "
-            "volatility, keep the book balanced and topped up, and let winners run toward the take-profit "
-            "instead of closing early."
+            "volatility, keep the hedge paired with the book's direction, and let winners run toward "
+            "the take-profit instead of closing early."
         )
 
     # Trading COSTS over the same window — the silent killer found in week 1:
