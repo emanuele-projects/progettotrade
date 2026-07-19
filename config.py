@@ -171,6 +171,27 @@ class Config:
     REFLECT_MAX_TOKENS: int = 1200       # the reflection output is a short list
     REFLECT_DECISIONS_SAMPLE: int = 12   # recent market views fed to the reflection
 
+    # ---- Anti-churn & give-back protection (2026-07-19 post-mortem) ----
+    # Findings from the first week: on 07-17 the book made +$1121 trading, then
+    # gave it ALL back on 07-18/19 — not to bad calls alone but to CHURN: ~80
+    # opens/day, the same mover re-entered up to 17x/day right after its stop
+    # fired, and ~$150/day of commissions (fees ate ~100% of gross trade P&L).
+    # These guards are DETERMINISTIC (enforced in code, not just prompt):
+    REENTRY_COOLDOWN_HOURS_AFTER_STOP: float = 4.0  # no re-entry after a SL/liq-guard exit
+    MAX_OPENS_PER_SYMBOL_PER_DAY: int = 3           # a symbol that keeps stopping out is done for the day
+    MAX_OPENS_PER_DAY: int = 40                     # global churn budget (was hitting ~84)
+    ENTRY_FAIL_BLACKLIST_AFTER: int = 2             # skip a symbol 24h after N failed open attempts
+    REFILL_DEBOUNCE_SECONDS: int = 600              # batch stop-clusters into ONE refill call (was instant)
+
+    # Drawdown brake: protect the peak. If equity falls this far off its
+    # high-water mark, enter DEFENSIVE mode (smaller book, 5x cap, half-size
+    # entries) until equity recovers half the gap (hysteresis). This is the
+    # "don't give the whole week back" rail (peak $5,210 → flat in 36h).
+    DRAWDOWN_BRAKE_PCT: float = 0.08
+    DEFENSIVE_MIN_POSITIONS: int = 6
+    DEFENSIVE_MAX_LEVERAGE: int = 5
+    DEFENSIVE_MARGIN_FACTOR: float = 0.5
+
     # ---- Public snapshot export (Vercel dashboard "Claude's brain" section) ----
     # Every few minutes the bot writes data/snapshot.json (decisions+reasoning,
     # lessons, equity curve) and, if BLOB_READ_WRITE_TOKEN is in .env, uploads

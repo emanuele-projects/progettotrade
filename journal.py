@@ -326,6 +326,34 @@ def get_meta(key: str, default: str | None = None) -> str | None:
         return default
 
 
+def last_losing_exit_ts(symbol: str) -> str | None:
+    """ISO ts of the most recent LOSING protective exit (stop-loss or
+    liquidation-guard) on `symbol`, or None. Take-profits don't count — a
+    winner re-qualifying is fine; a loser re-entered immediately is churn."""
+    with db() as c:
+        row = c.execute(
+            "SELECT MAX(ts) AS ts FROM trades WHERE symbol=? AND kind IN ('sl','liq_guard')",
+            (symbol,),
+        ).fetchone()
+        return row["ts"] if row and row["ts"] else None
+
+
+def count_opens_since(since_iso: str, symbol: str | None = None) -> int:
+    """Number of 'open' trades since `since_iso` (optionally for one symbol)."""
+    with db() as c:
+        if symbol is None:
+            row = c.execute(
+                "SELECT COUNT(*) AS n FROM trades WHERE kind='open' AND ts >= ?",
+                (since_iso,),
+            ).fetchone()
+        else:
+            row = c.execute(
+                "SELECT COUNT(*) AS n FROM trades WHERE kind='open' AND ts >= ? AND symbol=?",
+                (since_iso, symbol),
+            ).fetchone()
+        return int(row["n"]) if row else 0
+
+
 def recent_decisions(limit: int = 15) -> list[dict]:
     """Latest decisions (market_view + per-symbol reasoning) for the reflection
     loop to read back its own recent thinking."""

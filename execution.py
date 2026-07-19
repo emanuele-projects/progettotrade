@@ -96,7 +96,7 @@ def get_open_positions(client: Client) -> list[Position]:
 
 # futures_exchange_info() is a ~2 MB response; caching is mandatory once orders
 # can fire on every tick instead of once per 15-min cycle.
-_FILTERS_CACHE: dict[str, tuple[float, float]] = {}
+_FILTERS_CACHE: dict[str, tuple[float, float, float]] = {}  # (lot_step, tick, max_market_qty)
 _FILTERS_CACHE_TS: float = 0.0
 _FILTERS_TTL_SECONDS = 6 * 3600
 
@@ -108,17 +108,28 @@ def _symbol_filters(client: Client, symbol: str) -> tuple[float, float]:
         info = client.futures_exchange_info()
         fresh: dict[str, tuple[float, float]] = {}
         for s in info["symbols"]:
-            lot, tick = 0.001, 0.01
+            lot, tick, max_q = 0.001, 0.01, float("inf")
             for f in s["filters"]:
                 if f["filterType"] == "LOT_SIZE":
                     lot = float(f["stepSize"])
+                    max_q = min(max_q, float(f.get("maxQty") or "inf"))
+                if f["filterType"] == "MARKET_LOT_SIZE":
+                    # MARKET orders are bound by THIS maxQty (seen live: KAITO
+                    # -4005 "Quantity greater than max quantity" retried forever)
+                    max_q = min(max_q, float(f.get("maxQty") or "inf"))
                 if f["filterType"] == "PRICE_FILTER":
                     tick = float(f["tickSize"])
-            fresh[s["symbol"]] = (lot, tick)
+            fresh[s["symbol"]] = (lot, tick, max_q)
         _FILTERS_CACHE.clear()
         _FILTERS_CACHE.update(fresh)
         _FILTERS_CACHE_TS = now
-    return _FILTERS_CACHE.get(symbol, (0.001, 0.01))
+    return _FILTERS_CACHE.get(symbol, (0.001, 0.01, float("inf")))[:2]
+
+
+def _symbol_max_qty(client: Client, symbol: str) -> float:
+    """Exchange max order quantity for MARKET orders on `symbol`."""
+    _symbol_filters(client, symbol)  # ensure cache
+    return _FILTERS_CACHE.get(symbol, (0.001, 0.01, float("inf")))[2]
 
 
 _MAX_LEV_CACHE: dict[str, int] = {}
@@ -348,6 +359,16 @@ def open_position(client: Client, symbol: str, side: str, margin_usdt: float,
     if qty <= 0:
         journal.log_event("WARN", f"qty rounded to 0 on {symbol} — margin too small")
         return None
+    # Exchange MARKET-order max quantity (cheap coins → huge qty → -4005 reject).
+    max_q = _symbol_max_qty(client, symbol)
+    if qty > max_q:
+        capped = _floor_step(max_q, lot_step)
+        if capped <= 0 or capped * price < notional * 0.2:
+            journal.log_event("WARN", f"{symbol}: qty {qty} > exchange maxQty {max_q} — position "
+                                      f"would be <20% of intended size, skipped")
+            return None
+        journal.log_event("WARN", f"{symbol}: qty {qty} capped to exchange maxQty {capped}")
+        qty = capped
 
     order = client.futures_create_order(
         symbol=symbol, side="BUY" if side == "LONG" else "SELL",

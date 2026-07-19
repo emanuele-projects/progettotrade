@@ -265,12 +265,26 @@ SUBMIT_TOOL = {
 }
 
 
-def build_portfolio_status(n_open: int) -> str:
+def build_portfolio_status(n_open: int, defensive: bool = False) -> str:
     """Dynamic book-size line injected into the USER message (cache-safe).
 
     Tells Claude exactly how many entries the always-invested mandate requires
-    this cycle, so the instruction is concrete instead of aspirational."""
+    this cycle, so the instruction is concrete instead of aspirational.
+    In DEFENSIVE mode (drawdown brake) the mandate itself is reduced and the
+    hard caps applied in code are spelled out so the reasoning stays coherent."""
     minimum, target = CFG.MIN_OPEN_POSITIONS, CFG.TARGET_OPEN_POSITIONS
+    if defensive:
+        dmin = CFG.DEFENSIVE_MIN_POSITIONS
+        return (
+            f"=== PORTFOLIO STATUS — DEFENSIVE MODE (drawdown brake ACTIVE) ===\n"
+            f"Open positions: {n_open}. Equity has fallen ≥{CFG.DRAWDOWN_BRAKE_PCT:.0%} off its peak: "
+            f"the system is now PROTECTING CAPITAL. The always-invested minimum is reduced to {dmin} "
+            f"(entries beyond {dmin} are blocked in code), every new entry is HALF size and leverage is "
+            f"hard-capped at {CFG.DEFENSIVE_MAX_LEVERAGE}x regardless of what you request. "
+            f"Recent stops also trigger a {CFG.REENTRY_COOLDOWN_HOURS_AFTER_STOP:.0f}h re-entry cooldown. "
+            f"Act accordingly: only A+ setups, wide stops, prefer closing broken positions over adding new ones. "
+            f"Defensive mode lifts automatically once equity recovers."
+        )
     if n_open < minimum:
         need = minimum - n_open
         return (

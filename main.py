@@ -21,6 +21,7 @@ from config import CFG, LARGE_CAP_ANCHORS, STRATEGY_ALLOCATIONS
 import data
 import events
 import execution
+import guards
 import journal
 import memory
 import performance
@@ -131,7 +132,7 @@ def manage_existing_positions(client: Client, log: logging.Logger,
 
 def execute_decisions(
     client: Client, decision: strategy.Decision, account: dict, log: logging.Logger,
-    trigger: str | None = None,
+    trigger: str | None = None, guard: "guards.EntryGuard | None" = None,
 ) -> None:
     open_positions = execution.get_open_positions(client)
     open_syms = {p.symbol for p in open_positions}
@@ -148,6 +149,12 @@ def execute_decisions(
                 if len(open_syms) >= CFG.MAX_CONCURRENT_POSITIONS:
                     log.info(f"skip {d.action} {d.symbol}: max positions reached")
                     continue
+                if guard is not None:
+                    deny = guard.check(d.symbol, n_open=len(open_syms))
+                    if deny:
+                        log.info(f"skip {d.action} {d.symbol}: {deny}")
+                        journal.log_event("ENTRY_GUARD", f"{d.symbol}: {deny}")
+                        continue
                 if account["available_balance"] < margin_per_entry:
                     log.info(f"skip {d.action} {d.symbol}: avail {account['available_balance']:.2f} "
                              f"< margin {margin_per_entry:.2f}")
@@ -155,20 +162,25 @@ def execute_decisions(
                 sl = d.stop_loss_pct if d.stop_loss_pct is not None else CFG.HARD_STOP_LOSS_PCT
                 tp = d.take_profit_pct if d.take_profit_pct is not None else CFG.TAKE_PROFIT_PCT
                 lev = d.leverage if d.leverage is not None else CFG.LEVERAGE
-                new_notional = margin_per_entry * lev
+                margin_entry = margin_per_entry
+                if guard is not None:
+                    margin_entry, lev = guard.adjust(margin_entry, lev)
+                new_notional = margin_entry * lev
                 if total_notional + new_notional > CFG.MAX_TOTAL_NOTIONAL_USDT:
                     log.info(f"skip {d.action} {d.symbol}: notional cap "
                              f"({total_notional:,.0f} + {new_notional:,.0f} > {CFG.MAX_TOTAL_NOTIONAL_USDT:,.0f})")
                     journal.log_event("NOTIONAL_CAP", f"skip {d.action} {d.symbol} lev={lev}x")
                     continue
-                log.info(f"OPEN {side} {d.symbol} margin={margin_per_entry:.2f} "
+                log.info(f"OPEN {side} {d.symbol} margin={margin_entry:.2f} "
                          f"lev={lev}x conf={d.confidence:.2f} SL={sl:+.0%} TP={tp:+.0%} "
                          f":: {d.reasoning[:120]}")
-                order = execution.open_position(client, d.symbol, side, margin_per_entry,
+                order = execution.open_position(client, d.symbol, side, margin_entry,
                                                 sl_pct=sl, tp_pct=tp, leverage=lev, trigger=trigger)
                 if order is not None:
                     open_syms.add(d.symbol)
                     total_notional += new_notional
+                    if guard is not None:
+                        guard.record_success(d.symbol)
 
             elif d.action == "close":
                 position = next(
@@ -184,12 +196,15 @@ def execute_decisions(
             # never abort the rest of the batch or the post-execution reconcile.
             log.error(f"execution failed for {d.action} {d.symbol}: {e}")
             journal.log_event("ERROR", f"execute {d.action} {d.symbol}: {e}")
+            if guard is not None and d.action in ("long", "short"):
+                guard.record_failure(d.symbol)  # 2 strikes → 24h blacklist (no infinite retries)
 
 
 def baseline_cycle(client: Client, log: logging.Logger,
                    market_state: "stream.MarketState | None" = None,
                    position_cache: "risk_engine.PositionCache | None" = None,
-                   trigger_tag: str = "baseline") -> None:
+                   trigger_tag: str = "baseline",
+                   guard: "guards.EntryGuard | None" = None) -> None:
     """Slow lane: full universe + features + Claude. Runs on the (rare) baseline
     timer and on macro-regime triggers (trigger_tag records which)."""
     log.info("=" * 60)
@@ -211,6 +226,8 @@ def baseline_cycle(client: Client, log: logging.Logger,
         f"equity={account['total_equity']:.2f} wallet={account['wallet_balance']:.2f} "
         f"unrealized={account['unrealized_pnl']:+.2f} avail={account['available_balance']:.2f}"
     )
+    if guard is not None:
+        guard.defensive = guards.update_drawdown_state(account["total_equity"], log)
 
     if equity_floor_breached(account["total_equity"]):
         floor = CFG.INITIAL_CAPITAL_USDT * CFG.EQUITY_FLOOR_PCT
@@ -270,7 +287,8 @@ def baseline_cycle(client: Client, log: logging.Logger,
         n_lessons = len(journal.get_active_lessons(limit=CFG.MEMORY_MAX_LESSONS))
         log.info(f"memory: injected per-symbol record + {n_lessons} durable lessons")
 
-    portfolio_status = strategy.build_portfolio_status(len(open_serialized))
+    portfolio_status = strategy.build_portfolio_status(
+        len(open_serialized), defensive=bool(guard is not None and guard.defensive))
     if len(open_serialized) < CFG.MIN_OPEN_POSITIONS:
         log.info(f"portfolio under minimum: {len(open_serialized)}/{CFG.MIN_OPEN_POSITIONS}")
 
@@ -294,7 +312,7 @@ def baseline_cycle(client: Client, log: logging.Logger,
     for d in decision.decisions:
         log.info(f"  {d.symbol} -> {d.action} (conf={d.confidence:.2f})")
 
-    execute_decisions(client, decision, account, log, trigger=trigger_tag)
+    execute_decisions(client, decision, account, log, trigger=trigger_tag, guard=guard)
     if position_cache is not None:
         position_cache.reconcile(client)
         if market_state is not None:
@@ -311,7 +329,8 @@ def baseline_cycle(client: Client, log: logging.Logger,
 
 def focused_cycle(client: Client, log: logging.Logger, triggers: list["events.Trigger"],
                   market_state: "stream.MarketState",
-                  position_cache: "risk_engine.PositionCache") -> None:
+                  position_cache: "risk_engine.PositionCache",
+                  guard: "guards.EntryGuard | None" = None) -> None:
     """Fast lane follow-up: Claude re-evaluates only the symbols involved in the
     trigger batch (plus every open position). No universe scan, no news fetch."""
     log.info("=" * 60)
@@ -324,6 +343,8 @@ def focused_cycle(client: Client, log: logging.Logger, triggers: list["events.Tr
         equity=account["total_equity"],
         open_positions=len(execution.get_open_positions(client)), source="live",
     )
+    if guard is not None:
+        guard.defensive = guards.update_drawdown_state(account["total_equity"], log)
     if equity_floor_breached(account["total_equity"]):
         log.error("EQUITY FLOOR BREACHED (focused) — halting.")
         journal.log_event("HALT", "equity floor breached")
@@ -378,7 +399,8 @@ def focused_cycle(client: Client, log: logging.Logger, triggers: list["events.Tr
         candidate_features, open_serialized, fg, btc_features, news=[],
         operator_notes=operator_notes,
         trigger_lines=trigger_lines, focused=True,
-        portfolio_status=strategy.build_portfolio_status(len(open_serialized)),
+        portfolio_status=strategy.build_portfolio_status(
+            len(open_serialized), defensive=bool(guard is not None and guard.defensive)),
         memory_block=memory_block,
     )
     trigger_tag = ",".join(sorted({t.kind for t in triggers}))
@@ -393,7 +415,7 @@ def focused_cycle(client: Client, log: logging.Logger, triggers: list["events.Tr
     for d in decision.decisions:
         log.info(f"  {d.symbol} -> {d.action} (conf={d.confidence:.2f})")
 
-    execute_decisions(client, decision, account, log, trigger=f"event:{trigger_tag}")
+    execute_decisions(client, decision, account, log, trigger=f"event:{trigger_tag}", guard=guard)
     position_cache.reconcile(client)
     market_state.set_held(position_cache.held_symbols())
     log.info("focused cycle end")
@@ -518,6 +540,7 @@ def main() -> None:
 
     # ---- event loop: baseline timer + trigger-driven focused cycles ----
     policy = events.TriggerPolicy()
+    entry_guard = guards.EntryGuard()  # anti-churn + drawdown brake (post-mortem 07-19)
     next_baseline = time.monotonic()  # first baseline runs immediately
     # Reflection timer: distill the durable lesson set once/day. Persisted across
     # restarts via journal meta, so a redeploy doesn't re-reflect immediately —
@@ -582,7 +605,7 @@ def main() -> None:
                         continue
                     try:
                         baseline_cycle(client, log, market_state=market_state,
-                                       position_cache=position_cache)
+                                       position_cache=position_cache, guard=entry_guard)
                         policy.record_call(is_event=False)
                         next_baseline = time.monotonic() + CFG.BASELINE_INTERVAL_SECONDS
                     except KeyboardInterrupt:
@@ -593,15 +616,20 @@ def main() -> None:
                         next_baseline = time.monotonic() + 120  # retry backoff
                     continue
 
-                # Trigger received: debounce (risk_exit jumps the queue), batch, rate-limit.
+                # Trigger received: debounce + batch + rate-limit. risk_exit used
+                # to SKIP the debounce → instant refill → the just-stopped mover
+                # re-entered within seconds (churn engine of 07-18/19). Now stop
+                # clusters get their own longer debounce and land as ONE refill
+                # call after the market has shown its hand.
                 batch = [trig]
-                if trig.kind != "risk_exit":
-                    deadline = time.monotonic() + CFG.EVENT_DEBOUNCE_SECONDS
-                    while time.monotonic() < deadline:
-                        extra = trigger_bus.get_or_none(
-                            timeout=min(1.0, max(0.0, deadline - time.monotonic())))
-                        if extra is not None:
-                            batch.append(extra)
+                debounce = (CFG.REFILL_DEBOUNCE_SECONDS if trig.kind == "risk_exit"
+                            else CFG.EVENT_DEBOUNCE_SECONDS)
+                deadline = time.monotonic() + debounce
+                while time.monotonic() < deadline:
+                    extra = trigger_bus.get_or_none(
+                        timeout=min(1.0, max(0.0, deadline - time.monotonic())))
+                    if extra is not None:
+                        batch.append(extra)
                 batch.extend(trigger_bus.drain())
 
                 allowed, deny_reason = policy.can_event_call()
@@ -618,10 +646,12 @@ def main() -> None:
                 if any(t.symbol is None for t in batch):
                     tag = ",".join(sorted({t.kind for t in batch}))
                     baseline_cycle(client, log, market_state=market_state,
-                                   position_cache=position_cache, trigger_tag=f"event:{tag}")
+                                   position_cache=position_cache, trigger_tag=f"event:{tag}",
+                                   guard=entry_guard)
                     next_baseline = time.monotonic() + CFG.BASELINE_INTERVAL_SECONDS
                 else:
-                    focused_cycle(client, log, batch, market_state, position_cache)
+                    focused_cycle(client, log, batch, market_state, position_cache,
+                                  guard=entry_guard)
                 policy.record_call(is_event=True)
 
             except KeyboardInterrupt:

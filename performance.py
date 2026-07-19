@@ -70,10 +70,39 @@ def build_performance_review(client, lookback_days: int = 7,
             "instead of closing early."
         )
 
-    return "\n".join([
+    # Trading COSTS over the same window — the silent killer found in week 1:
+    # ~$150/day of commissions from churn ate ~100% of gross trade P&L while
+    # the review only showed the (positive) trade side. Claude must see both.
+    costs_line = None
+    try:
+        comm = sum(float(r["income"]) for r in
+                   client.futures_income_history(incomeType="COMMISSION", limit=1000)
+                   if int(r.get("time", 0)) >= cutoff_ms)
+        fund = sum(float(r["income"]) for r in
+                   client.futures_income_history(incomeType="FUNDING_FEE", limit=1000)
+                   if int(r.get("time", 0)) >= cutoff_ms)
+        gross_wins = sum(wins) if wins else 0.0
+        drag = abs(comm) + abs(min(fund, 0.0))
+        ratio = (drag / gross_wins) if gross_wins > 0 else None
+        costs_line = (f"TRADING COSTS (same window): commissions {comm:+.2f}, funding {fund:+.2f}"
+                      + (f" — fees consumed {ratio:.0%} of your gross wins." if ratio is not None else ""))
+        if ratio is not None and ratio > 0.4:
+            guidance += (
+                " COSTS ALERT: fees are consuming a large share of your gross wins — you are OVER-TRADING. "
+                "Open FEWER, higher-conviction positions, give them wider stops and room to work for hours, "
+                "and do NOT re-enter a symbol that was just stopped out. Every churned round-trip pays "
+                "double commission for nothing."
+            )
+    except Exception:
+        pass
+
+    lines = [
         f"=== YOUR RECENT TRADING PERFORMANCE (last {lookback_days}d, {n} closed trades) — LEARN FROM THIS ===",
         f"win-rate {wr:.0f}% ({len(wins)} win / {len(losses)} loss) | net realized {net:+.2f} USDT | "
         f"avg win {avg_w:+.2f} | avg loss {avg_l:+.2f}",
         f"last-10 win-rate {recent_wr:.0f}% | best {best[1]} {best[0]:+.2f} | worst {worst[1]} {worst[0]:+.2f}",
-        f"SELF-CORRECTION GUIDANCE: {guidance}",
-    ])
+    ]
+    if costs_line:
+        lines.append(costs_line)
+    lines.append(f"SELF-CORRECTION GUIDANCE: {guidance}")
+    return "\n".join(lines)
