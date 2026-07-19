@@ -88,11 +88,15 @@ def export(log=None) -> str | None:
         with urllib.request.urlopen(req, timeout=20) as r:
             resp = json.loads(r.read().decode())
         url = resp.get("url")
-        if url and journal.get_meta("snapshot_url") != url:
-            journal.set_meta("snapshot_url", url)
-            journal.log_event("SNAPSHOT", f"public snapshot URL: {url}")
-            if log is not None:
-                log.info(f"snapshot uploaded — set SNAPSHOT_URL on Vercel to: {url}")
+        # Bookkeeping only — must never discard a successful upload if it fails.
+        try:
+            if url and journal.get_meta("snapshot_url") != url:
+                journal.set_meta("snapshot_url", url)
+                journal.log_event("SNAPSHOT", f"public snapshot URL: {url}")
+                if log is not None:
+                    log.info(f"snapshot uploaded — set SNAPSHOT_URL on Vercel to: {url}")
+        except Exception:
+            pass
         return url
     except Exception as e:
         if log is not None:
