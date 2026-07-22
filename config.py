@@ -184,14 +184,27 @@ class Config:
     ENTRY_FAIL_BLACKLIST_AFTER: int = 2             # skip a symbol 24h after N failed open attempts
     REFILL_DEBOUNCE_SECONDS: int = 600              # batch stop-clusters into ONE refill call (was instant)
 
-    # Drawdown brake: protect the peak. If equity falls this far off its
-    # high-water mark, enter DEFENSIVE mode (smaller book, 5x cap, half-size
-    # entries) until equity recovers half the gap (hysteresis). This is the
-    # "don't give the whole week back" rail (peak $5,210 → flat in 36h).
+    # Drawdown brake — DISABLED 2026-07-22 by operator choice: "non voglio una
+    # strategia che si difende, voglio che quando perde reinvesta 1.1x la
+    # perdita in altro". Replaced by RECOVERY SIZING below. The machinery stays
+    # for a future re-enable.
+    DRAWDOWN_BRAKE_ENABLED: bool = False
     DRAWDOWN_BRAKE_PCT: float = 0.08
     DEFENSIVE_MIN_POSITIONS: int = 2
     DEFENSIVE_MAX_LEVERAGE: int = 5
     DEFENSIVE_MARGIN_FACTOR: float = 0.5
+
+    # ---- Recovery sizing (operator mandate 2026-07-22) ----
+    # Every realized LOSS feeds a persistent pool at RECOVERY_MULTIPLIER×|loss|;
+    # each new entry draws extra margin from the pool (invested "in something
+    # else" — the post-stop cooldown already forbids the same symbol). Wins
+    # drain the pool. This is a cross-asset martingale by explicit user choice:
+    # stakes GROW after losses. Survival rails: per-position margin ≤ 30% of
+    # live equity and ≤ base+2×base; the catastrophic equity floor stays.
+    RECOVERY_SIZING_ENABLED: bool = True
+    RECOVERY_MULTIPLIER: float = 1.1
+    RECOVERY_MAX_EXTRA_FACTOR: float = 2.0   # extra per entry ≤ 2× the base slice
+    RECOVERY_MAX_POSITION_PCT: float = 0.30  # total margin per position ≤ 30% of equity
 
     # ---- Public snapshot export (Vercel dashboard "Claude's brain" section) ----
     # Every few minutes the bot writes data/snapshot.json (decisions+reasoning,

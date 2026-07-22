@@ -119,7 +119,72 @@ class TestFailureBlacklist(_DBTest):
         self.assertIsNone(g.check("KAITOUSDT", n_open=5))
 
 
+class TestRecoveryPool(_DBTest):
+    def test_pool_math_loss_adds_multiplied_win_drains(self):
+        pool = guards.apply_income_to_pool(0.0, [-100.0])
+        self.assertAlmostEqual(pool, 110.0)          # 1.1× the loss
+        pool = guards.apply_income_to_pool(pool, [60.0])
+        self.assertAlmostEqual(pool, 50.0)           # wins drain 1:1
+        pool = guards.apply_income_to_pool(pool, [200.0])
+        self.assertEqual(pool, 0.0)                  # floored at zero
+
+    def test_update_from_income_history_with_cursor(self):
+        class FC:
+            def futures_income_history(self, **k):
+                return [
+                    {"income": "-50.0", "time": CFG.RESET_TS_MS + 1000},
+                    {"income": "20.0", "time": CFG.RESET_TS_MS + 2000},
+                ]
+        pool = guards.update_recovery_pool(FC())
+        self.assertAlmostEqual(pool, 50 * 1.1 - 20)
+        # Second sweep: cursor advanced → same rows ignored, pool unchanged
+        self.assertAlmostEqual(guards.update_recovery_pool(FC()), 50 * 1.1 - 20)
+
+    def test_allocate_draws_and_deducts(self):
+        journal.set_meta("loss_pool", "100")
+        extra = guards.allocate_recovery(base_margin=200.0, equity=4000.0)
+        self.assertAlmostEqual(extra, 100.0)          # full pool fits under caps
+        self.assertAlmostEqual(guards.recovery_pool(), 0.0)
+
+    def test_allocate_capped_by_position_pct(self):
+        journal.set_meta("loss_pool", "5000")
+        extra = guards.allocate_recovery(base_margin=200.0, equity=1000.0)
+        # position cap = 30% of 1000 = 300 → extra ≤ 100
+        self.assertAlmostEqual(extra, 100.0)
+        self.assertAlmostEqual(guards.recovery_pool(), 4900.0)
+
+    def test_allocate_capped_by_extra_factor(self):
+        journal.set_meta("loss_pool", "5000")
+        extra = guards.allocate_recovery(base_margin=200.0, equity=100000.0)
+        self.assertAlmostEqual(extra, 400.0)          # ≤ 2× base slice
+
+    def test_refund_returns_to_pool(self):
+        journal.set_meta("loss_pool", "10")
+        guards.refund_recovery(90.0)
+        self.assertAlmostEqual(guards.recovery_pool(), 100.0)
+
+    def test_empty_pool_allocates_nothing(self):
+        self.assertEqual(guards.allocate_recovery(200.0, 4000.0), 0.0)
+
+
+class TestDrawdownBrakeDisabled(_DBTest):
+    def test_disabled_brake_never_defensive_and_unsticks(self):
+        journal.set_meta("defensive_mode", "1")  # stuck from a previous regime
+        self.assertFalse(guards.update_drawdown_state(1000.0))  # deep loss, still off
+        self.assertEqual(journal.get_meta("defensive_mode"), "0")
+
+
 class TestDrawdownBrake(_DBTest):
+    def setUp(self):
+        super().setUp()
+        cfg_on = dataclasses.replace(CFG, DRAWDOWN_BRAKE_ENABLED=True)
+        self._pg = patch.object(guards, "CFG", cfg_on)
+        self._pg.start()
+
+    def tearDown(self):
+        self._pg.stop()
+        super().tearDown()
+
     def test_peak_ratchets_and_brake_engages(self):
         self.assertFalse(guards.update_drawdown_state(5000.0))   # sets peak
         self.assertFalse(guards.update_drawdown_state(4800.0))   # -4%: still off

@@ -168,6 +168,7 @@ def execute_decisions(
     margin_per_entry = CFG.INITIAL_CAPITAL_USDT * CFG.POSITION_MARGIN_PCT
 
     for d in decision.decisions:
+        recovery_extra = 0.0  # refunded to the pool on any failed open
         try:
             if d.action in ("long", "short"):
                 side = "LONG" if d.action == "long" else "SHORT"
@@ -196,11 +197,19 @@ def execute_decisions(
                 margin_entry = margin_per_entry
                 if guard is not None:
                     margin_entry, lev = guard.adjust(margin_entry, lev)
+                # Recovery sizing (operator mandate): enlarge the entry with
+                # 1.1× outstanding losses drawn from the pool; refunded if the
+                # open doesn't go through.
+                recovery_extra = guards.allocate_recovery(margin_entry, account["total_equity"])
+                if recovery_extra:
+                    log.info(f"recovery sizing {d.symbol}: +${recovery_extra:.0f} margin from loss pool")
+                    margin_entry += recovery_extra
                 new_notional = margin_entry * lev
                 if total_notional + new_notional > CFG.MAX_TOTAL_NOTIONAL_USDT:
                     log.info(f"skip {d.action} {d.symbol}: notional cap "
                              f"({total_notional:,.0f} + {new_notional:,.0f} > {CFG.MAX_TOTAL_NOTIONAL_USDT:,.0f})")
                     journal.log_event("NOTIONAL_CAP", f"skip {d.action} {d.symbol} lev={lev}x")
+                    guards.refund_recovery(recovery_extra)
                     continue
                 log.info(f"OPEN {side} {d.symbol} margin={margin_entry:.2f} "
                          f"lev={lev}x conf={d.confidence:.2f} SL={sl:+.0%} TP={tp:+.0%} "
@@ -212,6 +221,8 @@ def execute_decisions(
                     total_notional += new_notional
                     if guard is not None:
                         guard.record_success(d.symbol)
+                else:
+                    guards.refund_recovery(recovery_extra)
 
             elif d.action == "close":
                 position = next(
@@ -227,6 +238,7 @@ def execute_decisions(
             # never abort the rest of the batch or the post-execution reconcile.
             log.error(f"execution failed for {d.action} {d.symbol}: {e}")
             journal.log_event("ERROR", f"execute {d.action} {d.symbol}: {e}")
+            guards.refund_recovery(recovery_extra)
             if guard is not None and d.action in ("long", "short"):
                 guard.record_failure(d.symbol)  # 2 strikes → 24h blacklist (no infinite retries)
 
@@ -259,6 +271,7 @@ def baseline_cycle(client: Client, log: logging.Logger,
     )
     if guard is not None:
         guard.defensive = guards.update_drawdown_state(account["total_equity"], log)
+    guards.update_recovery_pool(client, log)
 
     if equity_floor_breached(account["total_equity"]):
         floor = CFG.INITIAL_CAPITAL_USDT * CFG.EQUITY_FLOOR_PCT
@@ -319,7 +332,8 @@ def baseline_cycle(client: Client, log: logging.Logger,
         log.info(f"memory: injected per-symbol record + {n_lessons} durable lessons")
 
     portfolio_status = strategy.build_portfolio_status(
-        len(open_serialized), defensive=bool(guard is not None and guard.defensive))
+        len(open_serialized), defensive=bool(guard is not None and guard.defensive),
+        recovery_pool=guards.recovery_pool())
     if len(open_serialized) < CFG.MIN_OPEN_POSITIONS:
         log.info(f"portfolio under minimum: {len(open_serialized)}/{CFG.MIN_OPEN_POSITIONS}")
 
@@ -376,6 +390,7 @@ def focused_cycle(client: Client, log: logging.Logger, triggers: list["events.Tr
     )
     if guard is not None:
         guard.defensive = guards.update_drawdown_state(account["total_equity"], log)
+    guards.update_recovery_pool(client, log)
     if equity_floor_breached(account["total_equity"]):
         log.error("EQUITY FLOOR BREACHED (focused) — halting.")
         journal.log_event("HALT", "equity floor breached")
@@ -431,7 +446,8 @@ def focused_cycle(client: Client, log: logging.Logger, triggers: list["events.Tr
         operator_notes=operator_notes,
         trigger_lines=trigger_lines, focused=True,
         portfolio_status=strategy.build_portfolio_status(
-            len(open_serialized), defensive=bool(guard is not None and guard.defensive)),
+            len(open_serialized), defensive=bool(guard is not None and guard.defensive),
+            recovery_pool=guards.recovery_pool()),
         memory_block=memory_block,
     )
     trigger_tag = ",".join(sorted({t.kind for t in triggers}))

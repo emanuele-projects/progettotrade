@@ -89,7 +89,74 @@ class EntryGuard:
 
 
 # ---------------------------------------------------------------------------
+# Recovery sizing — the operator's mandate: reinvest 1.1× every realized loss
+# into the NEXT entries (different symbols; the cooldown blocks the same one).
+# Pool persisted in bot_meta, fed from Binance's authoritative income history.
+# ---------------------------------------------------------------------------
+def recovery_pool() -> float:
+    return float(journal.get_meta("loss_pool", "0") or 0)
+
+
+def apply_income_to_pool(pool: float, events: list[float]) -> float:
+    """Pure pool arithmetic: a loss adds MULTIPLIER×|loss|, a win drains 1:1."""
+    for v in events:
+        if v < 0:
+            pool += CFG.RECOVERY_MULTIPLIER * abs(v)
+        else:
+            pool = max(0.0, pool - v)
+    return pool
+
+
+def update_recovery_pool(client, log=None) -> float:
+    """Fold realized-P&L events since the last sweep into the persistent pool.
+    Cheap (one REST call), idempotent via a persisted timestamp cursor."""
+    if not CFG.RECOVERY_SIZING_ENABLED:
+        return 0.0
+    cursor = int(journal.get_meta("loss_pool_ts", "0") or 0)
+    cursor = max(cursor, CFG.RESET_TS_MS)
+    try:
+        rows = client.futures_income_history(incomeType="REALIZED_PNL", limit=200)
+    except Exception:
+        return recovery_pool()
+    fresh = sorted((r for r in rows if int(r.get("time", 0)) > cursor),
+                   key=lambda r: int(r["time"]))
+    if not fresh:
+        return recovery_pool()
+    pool = apply_income_to_pool(recovery_pool(), [float(r["income"]) for r in fresh])
+    journal.set_meta("loss_pool", f"{pool:.2f}")
+    journal.set_meta("loss_pool_ts", str(int(fresh[-1]["time"])))
+    if log is not None and pool > 1:
+        log.info(f"recovery pool: ${pool:.2f} to be re-deployed on next entries (1.1x losses)")
+    return pool
+
+
+def allocate_recovery(base_margin: float, equity: float) -> float:
+    """Draw extra margin from the pool for ONE entry (and deduct it).
+
+    Caps: the whole position stays ≤ RECOVERY_MAX_POSITION_PCT of live equity
+    and the extra ≤ RECOVERY_MAX_EXTRA_FACTOR × the base slice."""
+    if not CFG.RECOVERY_SIZING_ENABLED:
+        return 0.0
+    pool = recovery_pool()
+    if pool <= 1.0:
+        return 0.0
+    cap_position = max(0.0, equity * CFG.RECOVERY_MAX_POSITION_PCT - base_margin)
+    extra = min(pool, cap_position, base_margin * CFG.RECOVERY_MAX_EXTRA_FACTOR)
+    if extra <= 1.0:
+        return 0.0
+    journal.set_meta("loss_pool", f"{pool - extra:.2f}")
+    return extra
+
+
+def refund_recovery(extra: float) -> None:
+    """Give an allocation back to the pool (the open failed)."""
+    if extra > 0:
+        journal.set_meta("loss_pool", f"{recovery_pool() + extra:.2f}")
+
+
+# ---------------------------------------------------------------------------
 # Drawdown brake — high-water-mark tracking, persisted across restarts.
+# DISABLED via CFG.DRAWDOWN_BRAKE_ENABLED (operator chose recovery sizing).
 # ---------------------------------------------------------------------------
 def update_drawdown_state(equity: float, log=None) -> bool:
     """Ratchet the equity peak and flip defensive mode on/off with hysteresis.
@@ -98,6 +165,12 @@ def update_drawdown_state(equity: float, log=None) -> bool:
     OFF when equity ≥ peak × (1 − DRAWDOWN_BRAKE_PCT / 2)
     Peak only ratchets upward (reset it manually via bot_meta on a capital reset).
     Returns the current defensive flag."""
+    if not CFG.DRAWDOWN_BRAKE_ENABLED:
+        # Operator disabled the brake: unstick any persisted defensive state.
+        if journal.get_meta("defensive_mode", "0") == "1":
+            journal.set_meta("defensive_mode", "0")
+            journal.log_event("DRAWDOWN_BRAKE", "disabled by operator — defensive mode cleared")
+        return False
     peak = float(journal.get_meta("equity_peak", "0") or 0)
     if equity > peak:
         peak = equity

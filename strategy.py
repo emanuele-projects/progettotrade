@@ -110,6 +110,7 @@ STYLE (operator-defined — an ALL-IN NICHE SCALPER):
 - Your stop_loss_pct and take_profit_pct become REAL exchange-held orders (STOP_MARKET / TAKE_PROFIT_MARKET) placed at entry: they fire even while you're not being consulted. A local risk engine adds a pre-liquidation guard at 75% of the distance to liquidation.
 - You decide ENTRY (direction), CLOSE, per-position stop_loss_pct + take_profit_pct, and leverage. One position per symbol; to flip, CLOSE first, re-enter opposite next cycle.
 - ANTI-CHURN RAILS (enforced in code): 2h lock on a symbol after a losing stop; max 3 opens per symbol per day; max 30 opens per day. Fees are real — a scalp must have room to pay its own ~0.1%-notional round-trip commission.
+- RECOVERY SIZING (operator-mandated, applied in code): every realized loss feeds a pool at 1.1×, and your NEXT entries are automatically ENLARGED with margin drawn from that pool — losses get re-invested into different coins. You don't manage the sizing; you feel it as bigger positions after losses. What YOU must do: when entries are enlarged, be extra selective on trend quality and keep the TP hittable within the window — the recovery lands through your normal targets, not through hope.
 
 DECISION HEURISTICS — INTRADAY MOMENTUM (1h/4h lead, daily = context):
 - Trade WITH the intraday move. The 1h and 4h frames lead your decision; the daily is context/bias, not a veto.
@@ -265,7 +266,8 @@ SUBMIT_TOOL = {
 }
 
 
-def build_portfolio_status(n_open: int, defensive: bool = False) -> str:
+def build_portfolio_status(n_open: int, defensive: bool = False,
+                           recovery_pool: float = 0.0) -> str:
     """Dynamic book-size line injected into the USER message (cache-safe).
 
     Tells Claude exactly how many entries the always-invested mandate requires
@@ -286,6 +288,13 @@ def build_portfolio_status(n_open: int, defensive: bool = False) -> str:
             f"Defensive mode lifts automatically once equity recovers."
         )
     cap = CFG.MAX_CONCURRENT_POSITIONS
+    recovery_line = ""
+    if recovery_pool > 1:
+        recovery_line = (
+            f"\nRECOVERY SIZING ACTIVE: ${recovery_pool:.0f} of past losses are queued for re-investment — "
+            f"code will ENLARGE your next entries (1.1x mandate). Be extra selective: clearest trends only, "
+            f"targets hittable within the 1-4h window."
+        )
     if n_open > cap:
         # Transition/overflow: more positions than the book allows. New entries
         # are blocked in code; prune down to the clearest trends.
@@ -302,13 +311,13 @@ def build_portfolio_status(n_open: int, defensive: bool = False) -> str:
             f"Open positions: {n_open} — BELOW the minimum of {minimum} (target {target}, cap {cap}). "
             f"MANDATE: open at least {need} new position(s) THIS cycle on the clearest trending niche "
             f"movers (each entry ~12% of capital, TP/SL sized for the 1-4h window). "
-            f"Only stay light if genuinely NOTHING is trending."
+            f"Only stay light if genuinely NOTHING is trending." + recovery_line
         )
     return (
         f"=== PORTFOLIO STATUS ===\n"
         f"Open positions: {n_open} (minimum {minimum}, target {target}, cap {cap}) — book compliant. "
         f"Top up toward {target} on any genuine fresh trend; close only positions whose trend has died "
-        f"(the 4h time stop cleans up the rest)."
+        f"(the 4h time stop cleans up the rest)." + recovery_line
     )
 
 
