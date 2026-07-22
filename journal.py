@@ -326,6 +326,16 @@ def get_meta(key: str, default: str | None = None) -> str | None:
         return default
 
 
+def latest_open_ts(symbol: str) -> str | None:
+    """ISO ts of the most recent 'open' trade on `symbol` (for the time stop)."""
+    with db() as c:
+        row = c.execute(
+            "SELECT MAX(ts) AS ts FROM trades WHERE symbol=? AND kind='open'",
+            (symbol,),
+        ).fetchone()
+        return row["ts"] if row and row["ts"] else None
+
+
 def last_losing_exit_ts(symbol: str) -> str | None:
     """ISO ts of the most recent LOSING protective exit (stop-loss or
     liquidation-guard) on `symbol`, or None. Take-profits don't count — a

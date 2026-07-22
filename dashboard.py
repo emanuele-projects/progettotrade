@@ -770,6 +770,7 @@ else:
         "tp": "🎯 Take Profit",
         "sl": "🛑 Stop Loss",
         "liq_guard": "⛔ Pre-liquidazione",
+        "time_stop": "⏱ Scadenza 4h",
         "manual_close": "🚪 Chiusura decisa da Claude",
         "server_exit_cleanup": "🧹 Pulizia ordini",
     }

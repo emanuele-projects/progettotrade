@@ -130,6 +130,34 @@ def manage_existing_positions(client: Client, log: logging.Logger,
     return serialized
 
 
+def enforce_time_stops(client: Client, log: logging.Logger) -> int:
+    """HARD 1-4h horizon (niche-scalper mode): force-close every position older
+    than CFG.MAX_HOLD_HOURS. Runs from the main loop; the exchange-held SL/TP
+    usually resolves a trade first — this is the 'trend didn't show up' exit.
+    Returns the number of positions closed."""
+    if not CFG.MAX_HOLD_HOURS:
+        return 0
+    closed = 0
+    now = datetime.now(timezone.utc)
+    for p in execution.get_open_positions(client):
+        opened = journal.latest_open_ts(p.symbol)
+        if not opened:
+            continue  # unknown age (journal reset): let SL/TP own it
+        try:
+            age_h = (now - datetime.fromisoformat(opened)).total_seconds() / 3600
+        except ValueError:
+            continue
+        if age_h >= CFG.MAX_HOLD_HOURS:
+            log.info(f"TIME_STOP {p.symbol}: open {age_h:.1f}h ≥ {CFG.MAX_HOLD_HOURS:.0f}h "
+                     f"(pnl {p.unrealized_pnl_pct:+.1%}) — closing")
+            try:
+                execution.close_position(client, p, reason="time_stop", trigger="risk:time_stop")
+                closed += 1
+            except Exception as e:
+                log.warning(f"time stop close {p.symbol}: {e}")
+    return closed
+
+
 def execute_decisions(
     client: Client, decision: strategy.Decision, account: dict, log: logging.Logger,
     trigger: str | None = None, guard: "guards.EntryGuard | None" = None,
@@ -148,6 +176,9 @@ def execute_decisions(
                     continue
                 if len(open_syms) >= CFG.MAX_CONCURRENT_POSITIONS:
                     log.info(f"skip {d.action} {d.symbol}: max positions reached")
+                    continue
+                if not CFG.TRADE_LARGE_CAPS and d.symbol in _LARGE_CAP_SET:
+                    log.info(f"skip {d.action} {d.symbol}: large caps are context-only in niche mode")
                     continue
                 if guard is not None:
                     deny = guard.check(d.symbol, n_open=len(open_syms))
@@ -554,6 +585,7 @@ def main() -> None:
         next_reflect = time.monotonic() + max(0.0, CFG.REFLECT_INTERVAL_SECONDS - _reflect_age)
     # Public snapshot for the Vercel dashboard: first upload ~1 min after start.
     next_snapshot = time.monotonic() + 60 if CFG.SNAPSHOT_EXPORT_ENABLED else float("inf")
+    next_time_stop_check = time.monotonic() + 30  # hard 4h-hold sweep
     soft_logged = False
     try:
         while True:
@@ -562,6 +594,14 @@ def main() -> None:
                 log.warning("KILL_SWITCH (hard) — shutting down.")
                 break
             _cleanup_stale_orders()  # orphaned sibling SL/TP after exchange-held exits
+            # HARD time stop (1-4h horizon): check every ~2 min, cheap REST call.
+            if time.monotonic() >= next_time_stop_check:
+                try:
+                    if enforce_time_stops(client, log):
+                        position_cache.needs_reconcile.set()
+                except Exception as e:
+                    log.warning(f"time-stop sweep: {e}")
+                next_time_stop_check = time.monotonic() + 120
             if mode == "soft":
                 if not soft_logged:
                     log.warning("KILL_SWITCH (soft) — trading paused; risk engine keeps "

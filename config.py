@@ -54,24 +54,23 @@ class Config:
     MARGIN_TYPE: str = "ISOLATED"
     INITIAL_DEPLOY_PCT: float = 0.50         # 50% margin deployed initially
     RESERVE_FOR_AVERAGING_PCT: float = 0.50  # 50% kept liquid for martingale
-    # CONVICTION mode (2026-07-19, user request): few LARGE positions instead of
-    # a 10-14 fleet of small ones. Big reasoned bets with wide exchange-held
-    # TP/SL left to resolve, plus a hedge leg (BTC/ETH short) protecting the
-    # book. Fewer entries = far fewer Claude calls and far less commission churn.
-    MAX_CONCURRENT_POSITIONS: int = 5        # 3-4 conviction bets + 1 hedge
-    POSITION_MARGIN_PCT: float = 0.15        # 15% of capital per entry (~$590)
+    # NICHE SCALPER mode (2026-07-19 sera, user request): simple trend-following
+    # on NICHE movers only (no BTC/ETH positions — anchors are macro context),
+    # 1-4h holding with a HARD 4h time stop enforced in code, capital nearly
+    # fully deployed across as many niche coins as qualify. Sonnet brain.
+    MAX_CONCURRENT_POSITIONS: int = 6        # all-in across up to 6 niche movers
+    POSITION_MARGIN_PCT: float = 0.12        # 12% × 6 = ~72% margin deployed
+    TRADE_LARGE_CAPS: bool = False           # BTC/ETH/SOL/BNB/XRP = context only, never positions
+    MAX_HOLD_HOURS: float = 4.0              # HARD time stop: every position closed by code at 4h
 
     # ---- Leverage v3 (5x-20x, per-trade, agent-chosen) ----
     ALLOWED_LEVERAGES: tuple[int, ...] = (5, 10, 15, 20)
     MAX_LEVERAGE: int = 20
     LEVERAGE_BRACKET_REFRESH_HOURS: int = 24  # per-symbol max-leverage cache TTL
 
-    # ---- Book mandate (CONVICTION mode 2026-07-19; was always-invested 10-14) ----
-    # Keep at least MIN_OPEN_POSITIONS conviction bets working (so capital is
-    # never idle) up to TARGET_OPEN_POSITIONS. Small minimum = no forced refill
-    # churn: an empty slot waits for an A+ setup instead of demanding filler.
-    MIN_OPEN_POSITIONS: int = 2
-    TARGET_OPEN_POSITIONS: int = 4
+    # ---- Book mandate (NICHE SCALPER: capital almost always fully working) ----
+    MIN_OPEN_POSITIONS: int = 4
+    TARGET_OPEN_POSITIONS: int = 6
 
     # ---- Server-side protection (exchange-held SL/TP orders) ----
     # Place STOP_MARKET + TAKE_PROFIT_MARKET (closePosition) on the exchange at
@@ -116,26 +115,26 @@ class Config:
     # mid-cap size — we want the coins that are actually moving today. A liquidity
     # floor keeps out illiquid pump-and-dumps the risk engine couldn't exit.
     UNIVERSE_MODE: str = "movers"             # "movers" | "midcap" (legacy)
-    MIN_VOLUME_24H_USD: float = 40_000_000    # liquidity floor for movers
+    MIN_VOLUME_24H_USD: float = 15_000_000    # lower floor: NICHE movers welcome (still exit-able)
     MOVER_MIN_ABS_CHANGE_24H: float = 0.04    # only coins that moved ≥4% in 24h
     MOVER_MAX_ABS_CHANGE_24H: float = 0.60    # skip already-blown-off >60% pumps
     MIN_MARKET_CAP_USD: float = 200_000_000   # (legacy midcap mode only)
     MAX_MARKET_CAP_USD: float = 2_000_000_000 # (legacy midcap mode only)
     UNIVERSE_REFRESH_HOURS: int = 6
-    UNIVERSE_MAX_CANDIDATES: int = 10          # conviction: only the strongest movers make the prompt
+    UNIVERSE_MAX_CANDIDATES: int = 12          # niche movers per prompt (anchors excluded from book)
 
     # ---- Loop ----
     LOOP_INTERVAL_SECONDS: int = 15 * 60  # legacy fixed cycle; Phase 5 switches to BASELINE_INTERVAL_SECONDS
 
     # ---- Claude call policy (event-driven agent) ----
-    # CONVICTION token-save profile (2026-07-19): a 2-5 position book needs few
-    # decisions. Baseline every 6h + at most 2 event calls/h → ~8-12 calls/day
-    # (~$0.4-0.6/day with Opus + cache), down from ~65/day in fleet mode.
-    BASELINE_INTERVAL_SECONDS: int = 6 * 60 * 60  # 6h full review
-    BASELINE_SKIP_IF_CALLED_WITHIN: int = 1800  # skip baseline if a Claude call ran in the last 30 min
+    # NICHE SCALPER profile: the operator wants a hunt every 1-4h plus signal
+    # reactivity, on a CHEAP brain (Sonnet). Baseline every 2h + up to 3 event
+    # calls/h → ~25-35 calls/day ≈ $0.6-0.9/day on Sonnet 4.6 with cache.
+    BASELINE_INTERVAL_SECONDS: int = 2 * 60 * 60  # 2h hunt for new niche setups
+    BASELINE_SKIP_IF_CALLED_WITHIN: int = 1200  # skip baseline if a Claude call ran in the last 20 min
     EVENT_DEBOUNCE_SECONDS: int = 120          # collect triggers for this long before calling
-    EVENT_MIN_CALL_INTERVAL_SECONDS: int = 600 # ≥10 min gap between any two Claude calls
-    EVENT_MAX_CALLS_PER_HOUR: int = 2          # token bucket for event-triggered calls
+    EVENT_MIN_CALL_INTERVAL_SECONDS: int = 300 # ≥5 min gap between any two Claude calls
+    EVENT_MAX_CALLS_PER_HOUR: int = 3          # scanner signals must be able to get in
     # Raw price-move trigger from the WS layer: kept only for EXTREME fast moves
     # (the scanner is the primary, qualified trigger source now).
     EVENT_PRICE_MOVE_PCT_HELD: float = 0.05       # 5% move in window on a held symbol
@@ -179,9 +178,9 @@ class Config:
     # opens/day, the same mover re-entered up to 17x/day right after its stop
     # fired, and ~$150/day of commissions (fees ate ~100% of gross trade P&L).
     # These guards are DETERMINISTIC (enforced in code, not just prompt):
-    REENTRY_COOLDOWN_HOURS_AFTER_STOP: float = 4.0  # no re-entry after a SL/liq-guard exit
-    MAX_OPENS_PER_SYMBOL_PER_DAY: int = 2           # conviction mode: a stopped bet is done for the day
-    MAX_OPENS_PER_DAY: int = 12                     # global churn budget (fleet mode was hitting ~84)
+    REENTRY_COOLDOWN_HOURS_AFTER_STOP: float = 2.0  # scalper horizon is 1-4h; 2h lock after a losing stop
+    MAX_OPENS_PER_SYMBOL_PER_DAY: int = 3           # a symbol that stops out 3x today is done
+    MAX_OPENS_PER_DAY: int = 30                     # 6 slots × ~4h rotation ≈ 25-30 natural turnover
     ENTRY_FAIL_BLACKLIST_AFTER: int = 2             # skip a symbol 24h after N failed open attempts
     REFILL_DEBOUNCE_SECONDS: int = 600              # batch stop-clusters into ONE refill call (was instant)
 
@@ -216,16 +215,16 @@ class Config:
     CRYPTOPANIC_TOKEN: str = os.getenv("CRYPTOPANIC_TOKEN", "")  # optional
 
     # ---- Models ----
-    # 2026-07-15: switched to Opus 4.8 (user request: more capable model).
-    # Only 1.67x Sonnet 4.6 per token ($5/$25 vs $3/$15); with the token-save
-    # call policy the daily cost stays ~$1.3-1.6. Cache still works (min
-    # cacheable prefix 4096 tokens on Opus, our prefix is ~4.1k+). NO thinking
-    # param: omitted = off on Opus 4.8, and forced tool_choice requires it off.
-    CLAUDE_MODEL: str = "claude-opus-4-8"
-    # Opus 4.7/4.8 tokenizer counts ~20-30% more tokens for the same text than
-    # Sonnet 4.6: baseline outputs measured ~3.3k would risk truncation at 4000
-    # (the same failure mode seen 2026-07-12 at 2000). 6000 gives headroom.
-    CLAUDE_MAX_TOKENS: int = 6000
+    # 2026-07-19: back to Sonnet 4.6 (user request: cheaper, simpler reasoning
+    # for the trend-following scalper). $3/$15 vs Opus $5/$25, smaller tokenizer,
+    # no thinking by default (forced tool_choice requires it off), prompt cache
+    # min prefix 1024 — all previously verified live on this exact pipeline.
+    # NOTE for future model changes: Sonnet 5 needs thinking={"type":"disabled"}
+    # explicitly and counts ~30% more tokens; Haiku needs a ≥4096-token prefix.
+    CLAUDE_MODEL: str = "claude-sonnet-4-6"
+    # 12 niche candidates + strict all-fields tool schema: outputs ~2.5-3.5k
+    # tokens on Sonnet. 5000 leaves headroom against max_tokens truncation.
+    CLAUDE_MAX_TOKENS: int = 5000
 
     # ---- Decision source ----
     # "api"  = call the Anthropic API directly (needs credits on ANTHROPIC_API_KEY)

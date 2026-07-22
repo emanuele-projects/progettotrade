@@ -174,7 +174,11 @@ def filter_universe() -> list[str]:
     movers.sort(key=lambda x: x[1], reverse=True)
     mover_syms = [m[0] for m in movers[:CFG.UNIVERSE_MAX_CANDIDATES]]
 
-    # anchors first, for BTC/ETH macro context in the prompt
+    # NICHE mode (TRADE_LARGE_CAPS=False): anchors are NOT candidates — BTC macro
+    # context reaches the prompt via btc_features, and the book stays niche-only.
+    if not CFG.TRADE_LARGE_CAPS:
+        anchor_set = set(LARGE_CAP_ANCHORS)
+        return [s for s in mover_syms if s not in anchor_set]
     anchors_listed = [s for s in LARGE_CAP_ANCHORS if s in futures_syms]
     return list(dict.fromkeys(anchors_listed + mover_syms))
 
